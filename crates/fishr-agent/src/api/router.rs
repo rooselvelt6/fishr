@@ -33,6 +33,10 @@ fn cors_layer() -> CorsLayer {
         .expose_headers([CONTENT_TYPE, "x-session-token".parse().unwrap()])
 }
 
+async fn root() -> impl axum::response::IntoResponse {
+    axum::response::Html(include_str!("../frontend/index.html"))
+}
+
 pub fn build_router(state: Arc<AppState>) -> Router {
     let health = Router::new()
         .route("/api/health", get(|| async { "🐟 OK" }))
@@ -42,6 +46,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/auth/login", post(auth::login))
         .layer(middleware::from_fn(rate_limit::login_rate_limit))
         .with_state(state.clone());
+
+    let frontend = Router::new()
+        .route("/", get(root));
 
     let protected = Router::new()
         .route("/api/auth/logout", post(auth::logout))
@@ -86,7 +93,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn(rate_limit::auth_required))
         .with_state(state.clone());
 
-    let app = health.merge(login).merge(protected);
+    let app = health.merge(login).merge(protected).merge(frontend);
 
     app.layer(cors_layer())
         .layer(SetResponseHeaderLayer::overriding(

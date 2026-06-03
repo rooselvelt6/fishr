@@ -18,18 +18,39 @@ impl Database {
         Ok(Self { pool })
     }
 
+    async fn exec_multi(&self, label: &str, sql: &str) -> anyhow::Result<()> {
+        for stmt in sql.split(';') {
+            let trimmed = stmt.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Strip leading and trailing comments/lines
+            let clean: Vec<&str> = trimmed
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter(|l| !l.trim().starts_with("--"))
+                .collect();
+            if clean.is_empty() {
+                continue;
+            }
+            let stmt_str = clean.join(" ");
+            if let Err(e) = self.pool.execute(&*stmt_str).await {
+                let msg = e.to_string();
+                if msg.contains("duplicate column") {
+                    tracing::warn!("{} ALTER skipped (already applied): {}", label, msg);
+                } else {
+                    return Err(e.into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn run_migrations(&self) -> anyhow::Result<()> {
-        let sql = include_str!("migrations/001_init.sql");
-        self.pool.execute(sql).await?;
-
-        let sql = include_str!("migrations/002_seed.sql");
-        self.pool.execute(sql).await?;
-
-        let sql = include_str!("migrations/003_supplier.sql");
-        self.pool.execute(sql).await?;
-
-        let sql = include_str!("migrations/004_auth.sql");
-        self.pool.execute(sql).await?;
+        self.exec_multi("001_init", include_str!("migrations/001_init.sql")).await?;
+        self.exec_multi("002_seed", include_str!("migrations/002_seed.sql")).await?;
+        self.exec_multi("003_supplier", include_str!("migrations/003_supplier.sql")).await?;
+        self.exec_multi("004_auth", include_str!("migrations/004_auth.sql")).await?;
 
         Ok(())
     }
@@ -143,14 +164,28 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // Update env file
-        std::fs::write(
-            ".env",
-            format!(
-                "BRANCH_ID={}\nBRANCH_RIF=J-00000000-0\nBRANCH_NAME=Mi Pescadería\n",
-                branch_id
-            ),
-        )?;
+        // Preserve existing .env and append/update BRANCH_ID
+        let env_path = std::path::Path::new(".env");
+        let mut lines: Vec<String> = if env_path.exists() {
+            std::fs::read_to_string(env_path)
+                .unwrap_or_default()
+                .lines()
+                .map(|l| l.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut found_branch_id = false;
+        for line in &mut lines {
+            if line.starts_with("BRANCH_ID=") {
+                *line = format!("BRANCH_ID={}", branch_id);
+                found_branch_id = true;
+            }
+        }
+        if !found_branch_id {
+            lines.push(format!("BRANCH_ID={}", branch_id));
+        }
+        std::fs::write(".env", lines.join("\n") + "\n")?;
 
         tracing::info!("Branch ID generated: {}", branch_id);
         Ok(())

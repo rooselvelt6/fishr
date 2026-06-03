@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fishr - Pescadería</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+<script>const API = window.location.origin;
+
+let state = { token: null, user: null, page: 'login' };
+
+async function api(method, path, body) {
+  const h = { 'Content-Type': 'application/json' };
+  if (state.token) h['x-session-token'] = state.token;
+  const r = await fetch(API + path, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) { const e = await r.json().catch(() => ({ error: r.statusText })); throw new Error(e.error || 'Error ' + r.status); }
+  return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
+}
+
+function $(id) { return document.getElementById(id); }
+
+// --- Login ---
+async function doLogin() {
+  const u = $('user').value, p = $('pass').value;
+  if (!u || !p) { $('login-err').textContent = 'Ingrese usuario y contraseña'; return; }
+  try {
+    const r = await api('POST', '/api/auth/login', { username: u, password: p });
+    state.token = r.token; state.user = r.user; state.page = 'dashboard';
+    $('login-err').textContent = '';
+    render();
+  } catch (e) { $('login-err').textContent = e.message; }
+}
+
+async function doLogout() {
+  try { await api('POST', '/api/auth/logout'); } catch {}
+  state = { token: null, user: null, page: 'login' };
+  render();
+}
+
+// --- Dashboard ---
+async function loadDashboard() {
+  try {
+    const [fish, methods, containers] = await Promise.all([
+      api('GET', '/api/fish-types'), api('GET', '/api/pos/payment-methods'), api('GET', '/api/containers')
+    ]);
+    $('dash-fish').textContent = fish.length;
+    $('dash-methods').textContent = methods.length;
+    $('dash-containers').textContent = containers.length;
+    $('dash-name').textContent = state.user.display_name || state.user.username;
+  } catch (e) { $('dash-content').innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+// --- Inventory ---
+async function loadInventory() {
+  try {
+    const containers = await api('GET', '/api/containers');
+    const fish = await api('GET', '/api/fish-types');
+    let html = '';
+    for (const c of containers) {
+      const pct = c.capacity > 0 ? Math.round(c.current_count / c.capacity * 100) : 0;
+      html += `<div class="card">
+        <div class="card-title"><i class="fas fa-box"></i> ${c.label}</div>
+        <div class="stat-row"><span>${c.fish_type_name}</span><span>${c.current_count}/${c.capacity}</span></div>
+        <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+        <div class="stat-row"><span>Ubicación: ${c.location || '—'}</span></div>
+      </div>`;
+    }
+    if (!containers.length) html = '<p class="empty">Sin contenedores. Crea uno desde la API.</p>';
+    $('inv-content').innerHTML = html;
+
+    // Fish type list
+    let fhtml = '<table><tr><th>Nombre</th><th>Especie</th><th>Categoría</th></tr>';
+    for (const t of fish) fhtml += `<tr><td>${t.name}</td><td>${t.species}</td><td>${t.category}</td></tr>`;
+    fhtml += '</table>';
+    $('fish-list').innerHTML = fhtml;
+  } catch (e) { $('inv-content').innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+// --- Customers ---
+async function loadCustomers() {
+  try {
+    const customers = await api('GET', '/api/customers');
+    let html = '<table><tr><th>Nombre</th><th>Teléfono</th><th>RIF</th></tr>';
+    for (const c of customers) html += `<tr><td>${c.name}</td><td>${c.phone || '—'}</td><td>${c.rif || '—'}</td></tr>`;
+    html += '</table>';
+    if (!customers.length) html = '<p class="empty">Sin clientes registrados.</p>';
+    $('cust-content').innerHTML = html;
+  } catch (e) { $('cust-content').innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+// --- Router ---
+function navigate(page) {
+  state.page = page;
+  render();
+}
+
+function render() {
+  $('app').innerHTML = buildPage();
+  if (state.token) {
+    if (state.page === 'dashboard') loadDashboard();
+    else if (state.page === 'inventory') loadInventory();
+    else if (state.page === 'customers') loadCustomers();
+  }
+}
+
+function buildPage() {
+  if (!state.token) return loginPage();
+  return layoutPage();
+}
+
+function loginPage() {
+  return `
+    <div class="login-page">
+      <div class="login-card">
+        <div class="login-icon"><i class="fas fa-fish"></i></div>
+        <h1>Fishr</h1>
+        <p class="login-sub">Sistema de Pescadería</p>
+        <div class="login-form">
+          <input id="user" type="text" placeholder="Usuario" onkeydown="if(event.key==='Enter') doLogin()">
+          <input id="pass" type="password" placeholder="Contraseña" onkeydown="if(event.key==='Enter') doLogin()">
+          <div id="login-err" class="error"></div>
+          <button onclick="doLogin()"><i class="fas fa-right-to-bracket"></i> Ingresar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function layoutPage() {
+  return `
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="logo"><i class="fas fa-fish"></i> Fishr</div>
+        <nav>
+          <a class="${state.page==='dashboard'?'active':''}" onclick="navigate('dashboard')"><i class="fas fa-chart-line"></i> Dashboard</a>
+          <a class="${state.page==='inventory'?'active':''}" onclick="navigate('inventory')"><i class="fas fa-boxes-stacked"></i> Inventario</a>
+          <a class="${state.page==='customers'?'active':''}" onclick="navigate('customers')"><i class="fas fa-users"></i> Clientes</a>
+          <a class="${state.page==='settings'?'active':''}" onclick="navigate('settings')"><i class="fas fa-gear"></i> Configuración</a>
+        </nav>
+        <div class="sidebar-footer">
+          <div><i class="fas fa-user"></i> <span id="dash-name">${state.user.display_name}</span></div>
+          <button onclick="doLogout()"><i class="fas fa-right-from-bracket"></i> Salir</button>
+        </div>
+      </aside>
+      <main class="main">
+        ${pageContent()}
+      </main>
+    </div>`;
+}
+
+function pageContent() {
+  switch (state.page) {
+    case 'dashboard': return `
+      <h1><i class="fas fa-chart-line"></i> Dashboard</h1>
+      <div class="stats">
+        <div class="stat"><i class="fas fa-fish"></i><span id="dash-fish">—</span><small>Tipos de pescado</small></div>
+        <div class="stat"><i class="fas fa-credit-card"></i><span id="dash-methods">—</span><small>Métodos de pago</small></div>
+        <div class="stat"><i class="fas fa-box"></i><span id="dash-containers">—</span><small>Contenedores</small></div>
+      </div>
+      <div id="dash-content" class="dash-welcome">
+        <div class="card">
+          <h3><i class="fas fa-store"></i> Bienvenido</h3>
+          <p>Sistema Fishr listo para operar.</p>
+          <p class="hint">Usa la API REST para operaciones completas de POS, reportes, proveedores y sincronización.</p>
+          <pre>curl -X POST ${API}/api/pos/confirm -H "x-session-token: ${state.token}" ...</pre>
+        </div>
+      </div>`;
+    case 'inventory': return `
+      <h1><i class="fas fa-boxes-stacked"></i> Inventario</h1>
+      <div id="inv-content"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>
+      <h2 style="margin-top:2rem"><i class="fas fa-fish"></i> Catálogo de pescados</h2>
+      <div id="fish-list"></div>`;
+    case 'customers': return `
+      <h1><i class="fas fa-users"></i> Clientes</h1>
+      <div id="cust-content"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>`;
+    case 'settings': return `
+      <h1><i class="fas fa-gear"></i> Configuración</h1>
+      <div class="card">
+        <h3><i class="fas fa-user"></i> Usuario</h3>
+        <p><strong>Usuario:</strong> ${state.user.username}</p>
+        <p><strong>Rol:</strong> ${state.user.role}</p>
+        <p><strong>Token:</strong> <code>${state.token.substring(0, 20)}...</code></p>
+      </div>
+      <div class="card">
+        <h3><i class="fas fa-info-circle"></i> Sistema</h3>
+        <p><strong>API:</strong> ${API}</p>
+        <p><strong>Estado:</strong> <span style="color:#22c55e">● En línea</span></p>
+      </div>`;
+    default: return '<h1>Página no encontrada</h1>';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', render);
+</script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; color: #1e293b; }
+.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0ea5e9 100%); }
+.login-card { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);
+  padding: 3rem; border-radius: 24px; text-align: center; width: 360px;
+  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
+.login-icon { font-size: 3rem; color: #0ea5e9; margin-bottom: 0.5rem; }
+.login-card h1 { font-size: 1.8rem; font-weight: 700; color: #0f172a; }
+.login-sub { color: #64748b; margin-bottom: 1.5rem; }
+.login-form input { width: 100%; padding: 0.8rem 1rem; margin-bottom: 0.8rem;
+  border: 1px solid #e2e8f0; border-radius: 12px; font-size: 1rem; }
+.login-form input:focus { outline: none; border-color: #0ea5e9; box-shadow: 0 0 0 3px rgba(14,165,233,0.2); }
+.login-form button { width: 100%; padding: 0.8rem; background: #0ea5e9; color: #fff;
+  border: none; border-radius: 12px; font-size: 1rem; font-weight: 600; cursor: pointer; }
+.login-form button:hover { background: #0284c7; }
+.error { color: #ef4444; font-size: 0.9rem; margin: 0.5rem 0; }
+.hint { color: #64748b; font-size: 0.85rem; }
+pre { background: #0f172a; color: #e2e8f0; padding: 0.8rem; border-radius: 8px;
+  font-size: 0.8rem; overflow-x: auto; margin-top: 0.5rem; }
+.layout { display: flex; min-height: 100vh; }
+.sidebar { width: 250px; background: linear-gradient(180deg, #0f172a, #1e293b);
+  color: #fff; display: flex; flex-direction: column; padding: 1.5rem 1rem; }
+.logo { font-size: 1.4rem; font-weight: 700; margin-bottom: 2rem; display: flex; align-items: center; gap: 0.5rem; }
+.logo i { color: #22d3ee; }
+.sidebar nav { flex: 1; display: flex; flex-direction: column; gap: 0.3rem; }
+.sidebar nav a { padding: 0.7rem 1rem; border-radius: 10px; cursor: pointer;
+  color: #94a3b8; text-decoration: none; display: flex; align-items: center; gap: 0.7rem; transition: all 0.15s; }
+.sidebar nav a:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.sidebar nav a.active { background: rgba(14,165,233,0.2); color: #38bdf8; }
+.sidebar-footer { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 1rem;
+  display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.9rem; }
+.sidebar-footer button { background: transparent; border: 1px solid rgba(255,255,255,0.15);
+  color: #94a3b8; padding: 0.4rem 0.8rem; border-radius: 8px; cursor: pointer; }
+.sidebar-footer button:hover { border-color: #ef4444; color: #ef4444; }
+.main { flex: 1; padding: 2rem; overflow-y: auto; }
+.main h1 { font-size: 1.5rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.stat { background: #fff; padding: 1.2rem; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+.stat i { font-size: 1.5rem; color: #0ea5e9; }
+.stat span { font-size: 2rem; font-weight: 700; }
+.stat small { color: #64748b; font-size: 0.8rem; }
+.card { background: #fff; padding: 1.5rem; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  margin-bottom: 1rem; }
+.card-title { font-weight: 600; font-size: 1.05rem; margin-bottom: 0.8rem; display: flex; align-items: center; gap: 0.5rem; }
+.stat-row { display: flex; justify-content: space-between; font-size: 0.9rem; color: #475569; margin: 0.3rem 0; }
+.bar { height: 8px; background: #e2e8f0; border-radius: 4px; margin: 0.5rem 0; overflow: hidden; }
+.bar-fill { height: 100%; background: linear-gradient(90deg, #0ea5e9, #22d3ee); border-radius: 4px; transition: width 0.3s; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+th, td { padding: 0.7rem 1rem; text-align: left; font-size: 0.9rem; }
+th { background: #f8fafc; font-weight: 600; color: #475569; }
+td { border-top: 1px solid #f1f5f9; }
+.empty { color: #94a3b8; text-align: center; padding: 2rem; }
+.dash-welcome .card p { margin: 0.5rem 0; }
+</style>
+</head>
+<body><div id="app"></div></body>
+</html>

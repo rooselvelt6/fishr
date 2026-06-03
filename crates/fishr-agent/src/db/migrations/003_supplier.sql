@@ -50,10 +50,6 @@ CREATE TABLE IF NOT EXISTS supplier_delivery_item (
     deleted_at TEXT
 );
 
--- Add supplier columns to fish_item
-ALTER TABLE fish_item ADD COLUMN supplier_delivery_item_id TEXT;
-ALTER TABLE fish_item ADD COLUMN cost_price TEXT;
-
 CREATE INDEX IF NOT EXISTS idx_supplier_branch ON supplier(branch_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_delivery_branch ON supplier_delivery(branch_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_delivery_supplier ON supplier_delivery(supplier_id);

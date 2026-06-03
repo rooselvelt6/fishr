@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS fish_item (
     added_at TEXT NOT NULL,
     sold_at TEXT,
     sold_in_sale_id TEXT,
+    supplier_delivery_item_id TEXT,
+    cost_price TEXT,
     op_counter INTEGER NOT NULL,
     updated_at TEXT NOT NULL,
     synced_at TEXT,
