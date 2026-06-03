@@ -7,6 +7,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use axum::http::{HeaderName, HeaderValue, header::{CONTENT_TYPE, AUTHORIZATION}};
 
 use crate::state::AppState;
+use crate::api::analytics;
 use crate::api::auth;
 use crate::api::inventory;
 use crate::api::pos;
@@ -90,6 +91,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/sync/status", get(crate::sync::agent::api_sync_status))
         .route("/api/sync/trigger", post(crate::sync::agent::api_trigger_sync))
         .route("/api/print/receipt", post(crate::hardware::printer::api_print_receipt))
+        .route("/api/analytics/dashboard", get(analytics::dashboard))
+        .route("/api/analytics/sales-trend", get(analytics::sales_trend))
+        .route("/api/analytics/top-products", get(analytics::top_products))
         .layer(middleware::from_fn(rate_limit::auth_required))
         .with_state(state.clone());
 

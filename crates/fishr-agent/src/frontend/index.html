@@ -3,251 +3,1028 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fishr - Pescadería</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
-<script>const API = window.location.origin;
-
-let state = { token: null, user: null, page: 'login' };
-
-async function api(method, path, body) {
-  const h = { 'Content-Type': 'application/json' };
-  if (state.token) h['x-session-token'] = state.token;
-  const r = await fetch(API + path, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
-  if (!r.ok) { const e = await r.json().catch(() => ({ error: r.statusText })); throw new Error(e.error || 'Error ' + r.status); }
-  return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
-}
-
-function $(id) { return document.getElementById(id); }
-
-// --- Login ---
-async function doLogin() {
-  const u = $('user').value, p = $('pass').value;
-  if (!u || !p) { $('login-err').textContent = 'Ingrese usuario y contraseña'; return; }
-  try {
-    const r = await api('POST', '/api/auth/login', { username: u, password: p });
-    state.token = r.token; state.user = r.user; state.page = 'dashboard';
-    $('login-err').textContent = '';
-    render();
-  } catch (e) { $('login-err').textContent = e.message; }
-}
-
-async function doLogout() {
-  try { await api('POST', '/api/auth/logout'); } catch {}
-  state = { token: null, user: null, page: 'login' };
-  render();
-}
-
-// --- Dashboard ---
-async function loadDashboard() {
-  try {
-    const [fish, methods, containers] = await Promise.all([
-      api('GET', '/api/fish-types'), api('GET', '/api/pos/payment-methods'), api('GET', '/api/containers')
-    ]);
-    $('dash-fish').textContent = fish.length;
-    $('dash-methods').textContent = methods.length;
-    $('dash-containers').textContent = containers.length;
-    $('dash-name').textContent = state.user.display_name || state.user.username;
-  } catch (e) { $('dash-content').innerHTML = `<div class="error">${e.message}</div>`; }
-}
-
-// --- Inventory ---
-async function loadInventory() {
-  try {
-    const containers = await api('GET', '/api/containers');
-    const fish = await api('GET', '/api/fish-types');
-    let html = '';
-    for (const c of containers) {
-      const pct = c.capacity > 0 ? Math.round(c.current_count / c.capacity * 100) : 0;
-      html += `<div class="card">
-        <div class="card-title"><i class="fas fa-box"></i> ${c.label}</div>
-        <div class="stat-row"><span>${c.fish_type_name}</span><span>${c.current_count}/${c.capacity}</span></div>
-        <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
-        <div class="stat-row"><span>Ubicación: ${c.location || '—'}</span></div>
-      </div>`;
-    }
-    if (!containers.length) html = '<p class="empty">Sin contenedores. Crea uno desde la API.</p>';
-    $('inv-content').innerHTML = html;
-
-    // Fish type list
-    let fhtml = '<table><tr><th>Nombre</th><th>Especie</th><th>Categoría</th></tr>';
-    for (const t of fish) fhtml += `<tr><td>${t.name}</td><td>${t.species}</td><td>${t.category}</td></tr>`;
-    fhtml += '</table>';
-    $('fish-list').innerHTML = fhtml;
-  } catch (e) { $('inv-content').innerHTML = `<div class="error">${e.message}</div>`; }
-}
-
-// --- Customers ---
-async function loadCustomers() {
-  try {
-    const customers = await api('GET', '/api/customers');
-    let html = '<table><tr><th>Nombre</th><th>Teléfono</th><th>RIF</th></tr>';
-    for (const c of customers) html += `<tr><td>${c.name}</td><td>${c.phone || '—'}</td><td>${c.rif || '—'}</td></tr>`;
-    html += '</table>';
-    if (!customers.length) html = '<p class="empty">Sin clientes registrados.</p>';
-    $('cust-content').innerHTML = html;
-  } catch (e) { $('cust-content').innerHTML = `<div class="error">${e.message}</div>`; }
-}
-
-// --- Router ---
-function navigate(page) {
-  state.page = page;
-  render();
-}
-
-function render() {
-  $('app').innerHTML = buildPage();
-  if (state.token) {
-    if (state.page === 'dashboard') loadDashboard();
-    else if (state.page === 'inventory') loadInventory();
-    else if (state.page === 'customers') loadCustomers();
-  }
-}
-
-function buildPage() {
-  if (!state.token) return loginPage();
-  return layoutPage();
-}
-
-function loginPage() {
-  return `
-    <div class="login-page">
-      <div class="login-card">
-        <div class="login-icon"><i class="fas fa-fish"></i></div>
-        <h1>Fishr</h1>
-        <p class="login-sub">Sistema de Pescadería</p>
-        <div class="login-form">
-          <input id="user" type="text" placeholder="Usuario" onkeydown="if(event.key==='Enter') doLogin()">
-          <input id="pass" type="password" placeholder="Contraseña" onkeydown="if(event.key==='Enter') doLogin()">
-          <div id="login-err" class="error"></div>
-          <button onclick="doLogin()"><i class="fas fa-right-to-bracket"></i> Ingresar</button>
-        </div>
-      </div>
-    </div>`;
-}
-
-function layoutPage() {
-  return `
-    <div class="layout">
-      <aside class="sidebar">
-        <div class="logo"><i class="fas fa-fish"></i> Fishr</div>
-        <nav>
-          <a class="${state.page==='dashboard'?'active':''}" onclick="navigate('dashboard')"><i class="fas fa-chart-line"></i> Dashboard</a>
-          <a class="${state.page==='inventory'?'active':''}" onclick="navigate('inventory')"><i class="fas fa-boxes-stacked"></i> Inventario</a>
-          <a class="${state.page==='customers'?'active':''}" onclick="navigate('customers')"><i class="fas fa-users"></i> Clientes</a>
-          <a class="${state.page==='settings'?'active':''}" onclick="navigate('settings')"><i class="fas fa-gear"></i> Configuración</a>
-        </nav>
-        <div class="sidebar-footer">
-          <div><i class="fas fa-user"></i> <span id="dash-name">${state.user.display_name}</span></div>
-          <button onclick="doLogout()"><i class="fas fa-right-from-bracket"></i> Salir</button>
-        </div>
-      </aside>
-      <main class="main">
-        ${pageContent()}
-      </main>
-    </div>`;
-}
-
-function pageContent() {
-  switch (state.page) {
-    case 'dashboard': return `
-      <h1><i class="fas fa-chart-line"></i> Dashboard</h1>
-      <div class="stats">
-        <div class="stat"><i class="fas fa-fish"></i><span id="dash-fish">—</span><small>Tipos de pescado</small></div>
-        <div class="stat"><i class="fas fa-credit-card"></i><span id="dash-methods">—</span><small>Métodos de pago</small></div>
-        <div class="stat"><i class="fas fa-box"></i><span id="dash-containers">—</span><small>Contenedores</small></div>
-      </div>
-      <div id="dash-content" class="dash-welcome">
-        <div class="card">
-          <h3><i class="fas fa-store"></i> Bienvenido</h3>
-          <p>Sistema Fishr listo para operar.</p>
-          <p class="hint">Usa la API REST para operaciones completas de POS, reportes, proveedores y sincronización.</p>
-          <pre>curl -X POST ${API}/api/pos/confirm -H "x-session-token: ${state.token}" ...</pre>
-        </div>
-      </div>`;
-    case 'inventory': return `
-      <h1><i class="fas fa-boxes-stacked"></i> Inventario</h1>
-      <div id="inv-content"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>
-      <h2 style="margin-top:2rem"><i class="fas fa-fish"></i> Catálogo de pescados</h2>
-      <div id="fish-list"></div>`;
-    case 'customers': return `
-      <h1><i class="fas fa-users"></i> Clientes</h1>
-      <div id="cust-content"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>`;
-    case 'settings': return `
-      <h1><i class="fas fa-gear"></i> Configuración</h1>
-      <div class="card">
-        <h3><i class="fas fa-user"></i> Usuario</h3>
-        <p><strong>Usuario:</strong> ${state.user.username}</p>
-        <p><strong>Rol:</strong> ${state.user.role}</p>
-        <p><strong>Token:</strong> <code>${state.token.substring(0, 20)}...</code></p>
-      </div>
-      <div class="card">
-        <h3><i class="fas fa-info-circle"></i> Sistema</h3>
-        <p><strong>API:</strong> ${API}</p>
-        <p><strong>Estado:</strong> <span style="color:#22c55e">● En línea</span></p>
-      </div>`;
-    default: return '<h1>Página no encontrada</h1>';
-  }
-}
-
-document.addEventListener('DOMContentLoaded', render);
-</script>
+<title>Fishr — Pescadería</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; color: #1e293b; }
-.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0ea5e9 100%); }
-.login-card { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);
-  padding: 3rem; border-radius: 24px; text-align: center; width: 360px;
-  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
-.login-icon { font-size: 3rem; color: #0ea5e9; margin-bottom: 0.5rem; }
-.login-card h1 { font-size: 1.8rem; font-weight: 700; color: #0f172a; }
-.login-sub { color: #64748b; margin-bottom: 1.5rem; }
-.login-form input { width: 100%; padding: 0.8rem 1rem; margin-bottom: 0.8rem;
-  border: 1px solid #e2e8f0; border-radius: 12px; font-size: 1rem; }
-.login-form input:focus { outline: none; border-color: #0ea5e9; box-shadow: 0 0 0 3px rgba(14,165,233,0.2); }
-.login-form button { width: 100%; padding: 0.8rem; background: #0ea5e9; color: #fff;
-  border: none; border-radius: 12px; font-size: 1rem; font-weight: 600; cursor: pointer; }
-.login-form button:hover { background: #0284c7; }
-.error { color: #ef4444; font-size: 0.9rem; margin: 0.5rem 0; }
-.hint { color: #64748b; font-size: 0.85rem; }
-pre { background: #0f172a; color: #e2e8f0; padding: 0.8rem; border-radius: 8px;
-  font-size: 0.8rem; overflow-x: auto; margin-top: 0.5rem; }
-.layout { display: flex; min-height: 100vh; }
-.sidebar { width: 250px; background: linear-gradient(180deg, #0f172a, #1e293b);
-  color: #fff; display: flex; flex-direction: column; padding: 1.5rem 1rem; }
-.logo { font-size: 1.4rem; font-weight: 700; margin-bottom: 2rem; display: flex; align-items: center; gap: 0.5rem; }
-.logo i { color: #22d3ee; }
-.sidebar nav { flex: 1; display: flex; flex-direction: column; gap: 0.3rem; }
-.sidebar nav a { padding: 0.7rem 1rem; border-radius: 10px; cursor: pointer;
-  color: #94a3b8; text-decoration: none; display: flex; align-items: center; gap: 0.7rem; transition: all 0.15s; }
-.sidebar nav a:hover { background: rgba(255,255,255,0.08); color: #fff; }
-.sidebar nav a.active { background: rgba(14,165,233,0.2); color: #38bdf8; }
-.sidebar-footer { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 1rem;
-  display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.9rem; }
-.sidebar-footer button { background: transparent; border: 1px solid rgba(255,255,255,0.15);
-  color: #94a3b8; padding: 0.4rem 0.8rem; border-radius: 8px; cursor: pointer; }
-.sidebar-footer button:hover { border-color: #ef4444; color: #ef4444; }
-.main { flex: 1; padding: 2rem; overflow-y: auto; }
-.main h1 { font-size: 1.5rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem; }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-.stat { background: #fff; padding: 1.2rem; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
-.stat i { font-size: 1.5rem; color: #0ea5e9; }
-.stat span { font-size: 2rem; font-weight: 700; }
-.stat small { color: #64748b; font-size: 0.8rem; }
-.card { background: #fff; padding: 1.5rem; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  margin-bottom: 1rem; }
-.card-title { font-weight: 600; font-size: 1.05rem; margin-bottom: 0.8rem; display: flex; align-items: center; gap: 0.5rem; }
-.stat-row { display: flex; justify-content: space-between; font-size: 0.9rem; color: #475569; margin: 0.3rem 0; }
-.bar { height: 8px; background: #e2e8f0; border-radius: 4px; margin: 0.5rem 0; overflow: hidden; }
-.bar-fill { height: 100%; background: linear-gradient(90deg, #0ea5e9, #22d3ee); border-radius: 4px; transition: width 0.3s; }
-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-th, td { padding: 0.7rem 1rem; text-align: left; font-size: 0.9rem; }
-th { background: #f8fafc; font-weight: 600; color: #475569; }
-td { border-top: 1px solid #f1f5f9; }
-.empty { color: #94a3b8; text-align: center; padding: 2rem; }
-.dash-welcome .card p { margin: 0.5rem 0; }
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#242838;--border:#2d3248;--text:#e1e5ee;--text2:#8b90a5;--primary:#3b82f6;--primary-hover:#2563eb;--success:#22c55e;--warning:#f59e0b;--danger:#ef4444;--sidebar-w:240px;--header-h:56px;--radius:10px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex}
+a{color:var(--primary);text-decoration:none}
+button{cursor:pointer;border:none;font-family:inherit;font-size:14px;border-radius:8px;padding:8px 16px}
+input,select,textarea{background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-family:inherit;font-size:14px;width:100%;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--primary)}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);font-size:13px}
+th{color:var(--text2);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.5px}
+tr:hover td{background:var(--surface2)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
+.badge-green{background:rgba(34,197,94,.15);color:var(--success)}
+.badge-yellow{background:rgba(245,158,11,.15);color:var(--warning)}
+.badge-red{background:rgba(239,68,68,.15);color:var(--danger)}
+.badge-blue{background:rgba(59,130,246,.15);color:var(--primary)}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-success{background:var(--success);color:#fff}
+.btn-warning{background:var(--warning);color:#1a1d27}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
+.btn-outline:hover{background:var(--surface2)}
+.btn-sm{padding:5px 10px;font-size:12px}
+/* SIDEBAR */
+.sidebar{width:var(--sidebar-w);background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;transition:transform .3s}
+.sidebar-brand{padding:16px 20px;border-bottom:1px solid var(--border);font-size:20px;font-weight:700;display:flex;align-items:center;gap:10px}
+.sidebar-brand i{color:var(--primary);font-size:24px}
+.sidebar-nav{padding:8px;flex:1;overflow-y:auto}
+.sidebar-link{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;color:var(--text2);font-size:14px;margin-bottom:2px;transition:.15s}
+.sidebar-link:hover,.sidebar-link.active{background:var(--surface2);color:var(--text)}
+.sidebar-link.active{color:var(--primary)}
+.sidebar-link i{width:20px;text-align:center;font-size:16px}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border)}
+.sidebar-user{display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:8px}
+.sidebar-user-icon{width:32px;height:32px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff}
+.sidebar-user span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* MAIN */
+.main{margin-left:var(--sidebar-w);flex:1;min-height:100vh;display:flex;flex-direction:column}
+.header{height:var(--header-h);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;background:var(--bg);z-index:50}
+.header-title{font-size:16px;font-weight:600}
+.header-actions{display:flex;align-items:center;gap:12px}
+.content{padding:24px;flex:1}
+.page{display:none}
+.page.active{display:block}
+/* LOGIN */
+.login-page{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0f1117 0%,#1a1d27 50%,#0f1117 100%);margin:0;position:fixed;top:0;left:0;right:0;bottom:0;z-index:200}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px;width:380px;max-width:90vw}
+.login-box h1{text-align:center;margin-bottom:8px;font-size:24px}
+.login-box p{text-align:center;color:var(--text2);margin-bottom:24px;font-size:14px}
+.login-box .logo{text-align:center;font-size:48px;color:var(--primary);margin-bottom:16px}
+.login-box label{display:block;font-size:13px;color:var(--text2);margin-bottom:4px;margin-top:12px}
+.login-box input{margin-bottom:4px}
+.login-box button{width:100%;margin-top:16px;padding:10px;font-size:15px}
+.login-error{background:rgba(239,68,68,.12);color:var(--danger);padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:12px;display:none}
+/* STATS GRID */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.stat-card .label{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.stat-card .value{font-size:28px;font-weight:700}
+.stat-card .sub{font-size:12px;color:var(--text2);margin-top:4px}
+.stat-card .icon{float:right;font-size:32px;opacity:.3}
+/* CHARTS GRID */
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+.chart-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.chart-card h3{font-size:14px;margin-bottom:16px;color:var(--text2)}
+.chart-card canvas{max-height:250px}
+/* RECENT TABLE */
+.recent-table{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.recent-table .rt-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.recent-table .rt-header h3{font-size:14px}
+/* INVENTORY INLINE */
+.inv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:16px}
+.inv-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.inv-card h4{font-size:14px;margin-bottom:4px}
+.inv-card .inv-type{font-size:12px;color:var(--text2);margin-bottom:8px}
+.inv-bar{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;margin-bottom:6px}
+.inv-bar-fill{height:100%;border-radius:3px;transition:width .5s}
+.inv-bar-fill.green{background:var(--success)}
+.inv-bar-fill.yellow{background:var(--warning)}
+.inv-bar-fill.red{background:var(--danger)}
+.inv-stats{display:flex;justify-content:space-between;font-size:12px;color:var(--text2)}
+/* POS PAGE */
+.pos-layout{display:grid;grid-template-columns:1fr 380px;gap:16px;min-height:calc(100vh - var(--header-h) - 48px)}
+.pos-fish-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;align-content:start}
+.pos-fish-item{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;text-align:center;cursor:pointer;transition:.15s}
+.pos-fish-item:hover,.pos-fish-item.selected{border-color:var(--primary);background:var(--surface2)}
+.pos-fish-item .name{font-size:13px;font-weight:600}
+.pos-fish-item .detail{font-size:11px;color:var(--text2)}
+.pos-fish-item .price{font-size:15px;font-weight:700;color:var(--success);margin-top:4px}
+.pos-cart{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column}
+.pos-cart h3{margin-bottom:12px;font-size:15px}
+.pos-cart-items{flex:1;overflow-y:auto;max-height:400px}
+.pos-cart-item{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.pos-cart-item .remove{color:var(--danger);cursor:pointer;font-size:16px}
+.pos-totals{margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.pos-totals .row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}
+.pos-totals .total{font-size:18px;font-weight:700;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+/* TABS */
+.tabs{display:flex;gap:4px;margin-bottom:16px;background:var(--surface);padding:4px;border-radius:8px;border:1px solid var(--border);width:fit-content}
+.tab{padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer;color:var(--text2);transition:.15s}
+.tab.active{background:var(--primary);color:#fff}
+.tab:hover:not(.active){color:var(--text)}
+/* MODAL */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:300}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:480px;max-width:90vw;max-height:85vh;overflow-y:auto}
+.modal h2{font-size:18px;margin-bottom:16px}
+.modal label{display:block;font-size:13px;color:var(--text2);margin-top:12px;margin-bottom:4px}
+.modal .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+/* RESPONSIVE TOGGLE */
+.menu-toggle{display:none;background:none;border:none;color:var(--text);font-size:20px;padding:4px 8px}
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .main{margin-left:0}
+  .menu-toggle{display:block}
+  .charts-grid{grid-template-columns:1fr}
+  .pos-layout{grid-template-columns:1fr}
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+}
+/* UTILITIES */
+.mb-8{margin-bottom:8px}
+.mb-16{margin-bottom:16px}
+.mt-16{margin-top:16px}
+.flex{display:flex}
+.flex-between{display:flex;justify-content:space-between;align-items:center}
+.gap-8{gap:8px}
+.gap-12{gap:12px}
+.gap-16{gap:16px}
+.text-center{text-align:center}
+.text-sm{font-size:12px;color:var(--text2)}
+.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty-state{text-align:center;padding:40px;color:var(--text2)}
+.empty-state i{font-size:48px;margin-bottom:12px;opacity:.3}
+/* SEARCH */
+.search-bar{display:flex;gap:8px;margin-bottom:16px}
+.search-bar input{flex:1}
+/* LOADING */
+.loading{text-align:center;padding:40px;color:var(--text2)}
+.loading i{font-size:24px;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* NOTIFICATION TOAST */
+.toast-container{position:fixed;top:16px;right:16px;z-index:999;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 20px rgba(0,0,0,.4);animation:slideIn .3s ease;min-width:280px}
+.toast.success{border-left:3px solid var(--success)}
+.toast.error{border-left:3px solid var(--danger)}
+.toast.info{border-left:3px solid var(--primary)}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 </style>
 </head>
-<body><div id="app"></div></body>
+<body>
+
+<div id="loginPage" class="login-page">
+  <div class="login-box">
+    <div class="logo"><i class="fas fa-fish"></i></div>
+    <h1>Fishr</h1>
+    <p>Sistema de Gestión para Pescadería</p>
+    <div id="loginError" class="login-error"></div>
+    <form id="loginForm" onsubmit="return handleLogin(event)">
+      <label>Usuario</label>
+      <input type="text" id="loginUser" placeholder="admin" autocomplete="username" required>
+      <label>Contraseña</label>
+      <input type="password" id="loginPass" placeholder="••••••" autocomplete="current-password" required>
+      <button type="submit" class="btn-primary">Iniciar Sesión</button>
+    </form>
+  </div>
+</div>
+
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-brand"><i class="fas fa-fish"></i> Fishr</div>
+  <div class="sidebar-nav">
+    <a class="sidebar-link active" data-page="dashboard" href="#"><i class="fas fa-chart-pie"></i> Dashboard</a>
+    <a class="sidebar-link" data-page="pos" href="#"><i class="fas fa-cash-register"></i> Punto de Venta</a>
+    <a class="sidebar-link" data-page="inventory" href="#"><i class="fas fa-boxes"></i> Inventario</a>
+    <a class="sidebar-link" data-page="customers" href="#"><i class="fas fa-users"></i> Clientes</a>
+    <a class="sidebar-link" data-page="suppliers" href="#"><i class="fas fa-truck"></i> Proveedores</a>
+    <a class="sidebar-link" data-page="sales" href="#"><i class="fas fa-receipt"></i> Ventas</a>
+    <a class="sidebar-link" data-page="settings" href="#"><i class="fas fa-cog"></i> Configuración</a>
+  </div>
+  <div class="sidebar-footer">
+    <div class="sidebar-user">
+      <div class="sidebar-user-icon" id="sidebarUserIcon">A</div>
+      <span id="sidebarUserName">Admin</span>
+    </div>
+    <button class="btn-outline btn-sm" style="width:100%" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Cerrar Sesión</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="header">
+    <div style="display:flex;align-items:center;gap:12px">
+      <button class="menu-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')"><i class="fas fa-bars"></i></button>
+      <span class="header-title" id="pageTitle">Dashboard</span>
+    </div>
+    <div class="header-actions">
+      <span style="font-size:12px;color:var(--text2)" id="headerTime"></span>
+      <span class="badge badge-blue" id="syncBadge">0 pendientes</span>
+    </div>
+  </div>
+  <div class="content">
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="pageDashboard">
+      <div class="stats-grid" id="dashStats"></div>
+      <div class="charts-grid">
+        <div class="chart-card"><h3><i class="fas fa-chart-line"></i> Ventas (7 días)</h3><canvas id="trendChart"></canvas></div>
+        <div class="chart-card"><h3><i class="fas fa-chart-bar"></i> Ventas por Hora (Hoy)</h3><canvas id="hourlyChart"></canvas></div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card"><h3><i class="fas fa-chart-doughnut"></i> Método de Pago</h3><canvas id="paymentChart"></canvas></div>
+        <div class="chart-card"><h3><i class="fas fa-trophy"></i> Top Productos</h3><canvas id="topProductsChart"></canvas></div>
+      </div>
+      <div class="recent-table">
+        <div class="rt-header"><h3><i class="fas fa-clock"></i> Ventas Recientes</h3><button class="btn-outline btn-sm" onclick="navigate('sales')">Ver todas</button></div>
+        <div style="overflow-x:auto"><table id="recentSalesTable"><thead><tr><th>Cliente</th><th>Pago</th><th>Items</th><th>Total</th><th>Hora</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- POS -->
+    <div class="page" id="pagePos">
+      <div class="pos-layout">
+        <div>
+          <div class="flex-between mb-16">
+            <h3><i class="fas fa-fish"></i> Seleccionar Pescado</h3>
+            <div class="flex gap-8">
+              <button class="btn-outline btn-sm" onclick="readScale()"><i class="fas fa-weight"></i> Leer Báscula</button>
+              <span id="scaleDisplay" style="font-size:20px;font-weight:700;color:var(--success)">0 g</span>
+            </div>
+          </div>
+          <div class="pos-fish-grid" id="posFishGrid"></div>
+        </div>
+        <div class="pos-cart">
+          <div class="flex-between"><h3><i class="fas fa-shopping-cart"></i> Carrito</h3><span id="cartCount" style="font-size:12px;color:var(--text2)">0 items</span></div>
+          <div class="pos-cart-items" id="cartItems"></div>
+          <div class="pos-totals">
+            <div class="row"><span>Subtotal</span><span id="cartSubtotal">Bs. 0,00</span></div>
+            <div class="row"><span>Preparación</span><span id="cartPrepFee">Bs. 0,00</span></div>
+            <div class="row"><span>Descuento</span><span id="cartDiscount">Bs. 0,00</span></div>
+            <div class="row"><span>IVA (16%)</span><span id="cartTax">Bs. 0,00</span></div>
+            <div class="total flex-between"><span>Total</span><span id="cartTotal">Bs. 0,00</span></div>
+            <div style="margin-top:12px">
+              <div style="display:flex;gap:8px;margin-bottom:8px">
+                <div style="flex:1"><label style="font-size:12px;color:var(--text2);margin-bottom:4px">IVA %</label><input type="number" id="posIvaRate" value="16" min="0" max="100" step="0.5"></div>
+                <div style="flex:1"><label style="font-size:12px;color:var(--text2);margin-bottom:4px">Descuento (Bs.)</label><input type="number" id="posDiscount" value="0" min="0" step="0.5"></div>
+              </div>
+              <label style="font-size:12px;color:var(--text2);margin-bottom:4px">Cliente (opcional)</label>
+              <input type="text" id="posCustomer" list="customerList" placeholder="Buscar cliente..." style="margin-bottom:8px">
+              <datalist id="customerList"></datalist>
+              <label style="font-size:12px;color:var(--text2);margin-bottom:4px">Método de Pago</label>
+              <select id="posPaymentMethod" style="margin-bottom:8px"></select>
+            </div>
+            <button class="btn-success" style="width:100%;margin-top:8px;padding:10px" onclick="confirmSale()"><i class="fas fa-check"></i> Confirmar Venta</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INVENTORY -->
+    <div class="page" id="pageInventory">
+      <div class="tabs" id="invTabs">
+        <span class="tab active" data-invtab="containers">Tanques</span>
+        <span class="tab" data-invtab="fish">Pescado</span>
+        <span class="tab" data-invtab="prices">Precios</span>
+        <span class="tab" data-invtab="types">Especies</span>
+      </div>
+      <div id="invTabContainers" class="invTab"><div class="inv-grid" id="containerGrid"></div></div>
+      <div id="invTabFish" class="invTab" style="display:none">
+        <div class="flex-between mb-16"><h3>Pescado Disponible</h3><button class="btn-primary btn-sm" onclick="showAddFishModal()"><i class="fas fa-plus"></i> Agregar</button></div>
+        <div style="overflow-x:auto"><table id="fishTable"><thead><tr><th>Tipo</th><th>Tanque</th><th>Peso (g)</th><th>Agregado</th><th></th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div id="invTabPrices" class="invTab" style="display:none">
+        <div class="flex-between mb-16"><h3>Precios de Mercado</h3><button class="btn-primary btn-sm" onclick="showPriceModal()"><i class="fas fa-plus"></i> Nuevo Precio</button></div>
+        <div style="overflow-x:auto"><table id="priceTable"><thead><tr><th>Especie</th><th>Precio/Kg</th><th>Costo/Kg</th><th>Margen</th><th>Desde</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div id="invTabTypes" class="invTab" style="display:none">
+        <h3 class="mb-16">Catálogo de Especies</h3>
+        <div style="overflow-x:auto"><table id="fishTypeTable"><thead><tr><th>Nombre</th><th>Especie</th><th>Categoría</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- CUSTOMERS -->
+    <div class="page" id="pageCustomers">
+      <div class="flex-between mb-16"><h3><i class="fas fa-users"></i> Clientes</h3><button class="btn-primary btn-sm" onclick="showCustomerModal()"><i class="fas fa-plus"></i> Nuevo Cliente</button></div>
+      <div style="overflow-x:auto"><table id="customerTable"><thead><tr><th>Nombre</th><th>Teléfono</th><th>RIF</th><th>Email</th><th>Puntos</th><th></th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- SUPPLIERS -->
+    <div class="page" id="pageSuppliers">
+      <div class="tabs" id="supTabs">
+        <span class="tab active" data-suptab="suppliers">Proveedores</span>
+        <span class="tab" data-suptab="deliveries">Recepciones</span>
+      </div>
+      <div id="supTabSuppliers" class="supTab">
+        <div class="flex-between mb-16"><h3>Proveedores</h3><button class="btn-primary btn-sm" onclick="showSupplierModal()"><i class="fas fa-plus"></i> Nuevo</button></div>
+        <div style="overflow-x:auto"><table id="supplierTable"><thead><tr><th>Nombre</th><th>RIF</th><th>Teléfono</th><th>Contacto</th><th></th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div id="supTabDeliveries" class="supTab" style="display:none">
+        <div class="flex-between mb-16"><h3>Recepciones</h3><button class="btn-primary btn-sm" onclick="showDeliveryModal()"><i class="fas fa-plus"></i> Nueva Recepción</button></div>
+        <div style="overflow-x:auto"><table id="deliveryTable"><thead><tr><th>Proveedor</th><th>Fecha</th><th>Total</th><th>Placa</th><th>Notas</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- SALES -->
+    <div class="page" id="pageSales">
+      <h3 class="mb-16"><i class="fas fa-receipt"></i> Historial de Ventas</h3>
+      <div style="overflow-x:auto"><table id="salesTable"><thead><tr><th>Cliente</th><th>Pago</th><th>Items</th><th>Total</th><th>Fecha</th><th></th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="pageSettings">
+      <h3 class="mb-16"><i class="fas fa-cog"></i> Configuración</h3>
+      <div class="stats-grid" style="grid-template-columns:1fr 1fr">
+        <div class="card"><h4 style="margin-bottom:12px;font-size:14px"><i class="fas fa-user"></i> Usuario</h4><div id="settingsUser"></div></div>
+        <div class="card"><h4 style="margin-bottom:12px;font-size:14px"><i class="fas fa-info-circle"></i> Sistema</h4><div id="settingsSystem"></div></div>
+      </div>
+      <div class="card mt-16"><h4 style="margin-bottom:12px;font-size:14px"><i class="fas fa-sync"></i> Sincronización</h4><div id="settingsSync"></div></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay"><div class="modal" id="modalContent"></div></div>
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ===== STATE =====
+const state = { token: null, user: null, page: 'dashboard', posCart: [], posFish: [], posMethods: [], charts: {} }
+
+// ===== API HELPER =====
+async function api(method, path, body) {
+  const opts = { method, headers: {} }
+  if (state.token) opts.headers['x-session-token'] = state.token
+  if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body) }
+  const res = await fetch(path, opts)
+  if (!res.ok) {
+    let msg = `Error ${res.status}`
+    try { const j = await res.json(); msg = j.error || msg } catch {}
+    throw new Error(msg)
+  }
+  if (res.status === 204) return null
+  return res.json()
+}
+
+// ===== TOAST =====
+function toast(msg, type = 'info') {
+  const c = document.getElementById('toastContainer')
+  const t = document.createElement('div')
+  t.className = `toast ${type}`
+  const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle' }
+  t.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${msg}`
+  c.appendChild(t)
+  setTimeout(() => t.remove(), 3000)
+}
+
+// ===== LOGIN =====
+async function handleLogin(e) {
+  e.preventDefault()
+  const username = document.getElementById('loginUser').value
+  const password = document.getElementById('loginPass').value
+  const errEl = document.getElementById('loginError')
+  errEl.style.display = 'none'
+  try {
+    const res = await api('POST', '/api/auth/login', { username, password })
+    state.token = res.token
+    state.user = res.user
+    document.getElementById('loginPage').style.display = 'none'
+    document.getElementById('sidebarUserName').textContent = state.user.display_name || state.user.username
+    document.getElementById('sidebarUserIcon').textContent = (state.user.display_name || state.user.username)[0].toUpperCase()
+    initApp()
+  } catch (e) { errEl.textContent = e.message; errEl.style.display = 'block' }
+  return false
+}
+
+async function logout() {
+  try { await api('POST', '/api/auth/logout') } catch {}
+  state.token = null; state.user = null
+  document.getElementById('loginPage').style.display = 'flex'
+  Object.keys(state.charts).forEach(k => { if (state.charts[k]) { state.charts[k].destroy(); delete state.charts[k] } })
+}
+
+// ===== NAVIGATION =====
+function navigate(page) {
+  state.page = page
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'))
+  document.getElementById('page' + page.charAt(0).toUpperCase() + page.slice(1)).classList.add('active')
+  document.querySelectorAll('.sidebar-link').forEach(a => a.classList.toggle('active', a.dataset.page === page))
+  const titles = { dashboard:'Dashboard', pos:'Punto de Venta', inventory:'Inventario', customers:'Clientes', suppliers:'Proveedores', sales:'Ventas', settings:'Configuración' }
+  document.getElementById('pageTitle').textContent = titles[page] || page
+  document.getElementById('sidebar').classList.remove('open')
+  loadPage(page)
+}
+
+document.querySelectorAll('.sidebar-link').forEach(a => a.addEventListener('click', e => { e.preventDefault(); navigate(a.dataset.page) }))
+
+async function loadPage(page) {
+  switch(page) {
+    case 'dashboard': loadDashboard(); break
+    case 'pos': loadPos(); break
+    case 'inventory': loadInventory(); break
+    case 'customers': loadCustomers(); break
+    case 'suppliers': loadSuppliers(); break
+    case 'sales': loadSales(); break
+    case 'settings': loadSettings(); break
+  }
+}
+
+// ===== DASHBOARD =====
+let trendChartInstance = null, hourlyChartInstance = null, paymentChartInstance = null, topProductsChartInstance = null
+
+async function loadDashboard() {
+  try {
+    const d = await api('GET', '/api/analytics/dashboard')
+    const stats = document.getElementById('dashStats')
+    stats.innerHTML = `
+      <div class="stat-card"><div class="icon"><i class="fas fa-shopping-cart"></i></div><div class="label">Ventas Hoy</div><div class="value">${d.today_sales_count}</div></div>
+      <div class="stat-card"><div class="icon"><i class="fas fa-dollar-sign"></i></div><div class="label">Ingresos Hoy</div><div class="value">Bs. ${d.today_revenue.toFixed(2)}</div><div class="sub">Ticket prom: Bs. ${d.today_avg_ticket.toFixed(2)}</div></div>
+      <div class="stat-card"><div class="icon"><i class="fas fa-users"></i></div><div class="label">Clientes</div><div class="value">${d.total_customers}</div></div>
+      <div class="stat-card"><div class="icon"><i class="fas fa-fish"></i></div><div class="label">Especies</div><div class="value">${d.total_fish_types}</div><div class="sub">${d.total_fish_available} peces disponibles</div></div>
+      <div class="stat-card"><div class="icon"><i class="fas fa-boxes"></i></div><div class="label">Tanques</div><div class="value">${d.total_containers}</div><div class="sub">Valor inv: Bs. ${d.inventory_summary.total_value.toFixed(2)}</div></div>
+      <div class="stat-card"><div class="icon"><i class="fas fa-sync"></i></div><div class="label">Sync Pendiente</div><div class="value">${d.pending_sync}</div></div>
+    `
+
+    // Trend chart
+    try {
+      const trend = await api('GET', '/api/analytics/sales-trend?period=day&days=7')
+      if (trendChartInstance) trendChartInstance.destroy()
+      trendChartInstance = new Chart(document.getElementById('trendChart'), {
+        type: 'line', data: {
+          labels: trend.map(t => { const p = t.label.split('-'); return p[2]+'/'+p[1] }),
+          datasets: [
+            { label: 'Ingresos', data: trend.map(t => t.revenue), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.1)', fill: true, tension: .3, yAxisID: 'y' },
+            { label: 'Ventas', data: trend.map(t => t.sales), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.1)', fill: true, tension: .3, yAxisID: 'y1' }
+          ]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8b90a5' } } },
+          scales: { x: { ticks: { color: '#8b90a5' }, grid: { color: '#2d3248' } },
+            y: { type: 'linear', position: 'left', ticks: { color: '#8b90a5' }, grid: { color: '#2d3248' } },
+            y1: { type: 'linear', position: 'right', ticks: { color: '#8b90a5' }, grid: { display: false } }
+          }
+        }
+      })
+    } catch {}
+
+    // Hourly chart
+    if (hourlyChartInstance) hourlyChartInstance.destroy()
+    hourlyChartInstance = new Chart(document.getElementById('hourlyChart'), {
+      type: 'bar', data: {
+        labels: Array.from({length:24},(_,i)=>i+'h'),
+        datasets: [
+          { label: 'Ventas', data: d.hourly_breakdown.map(h => h.sales), backgroundColor: 'rgba(59,130,246,.6)', borderRadius: 4 }
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8b90a5' } } },
+        scales: { x: { ticks: { color: '#8b90a5' }, grid: { color: '#2d3248' } }, y: { ticks: { color: '#8b90a5' }, grid: { color: '#2d3248' } } }
+      }
+    })
+
+    // Payment chart
+    if (paymentChartInstance) paymentChartInstance.destroy()
+    const payLabels = d.revenue_by_payment.map(p => p.method)
+    const payData = d.revenue_by_payment.map(p => p.total)
+    const colors = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#a855f7']
+    paymentChartInstance = new Chart(document.getElementById('paymentChart'), {
+      type: 'doughnut', data: {
+        labels: payLabels,
+        datasets: [{ data: payData, backgroundColor: colors.slice(0, payData.length), borderWidth: 0 }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#8b90a5', padding: 12 } } } }
+    })
+
+    // Top products chart
+    if (topProductsChartInstance) topProductsChartInstance.destroy()
+    topProductsChartInstance = new Chart(document.getElementById('topProductsChart'), {
+      type: 'bar', data: {
+        labels: d.top_products.map(p => p.product),
+        datasets: [{ label: 'Ingresos', data: d.top_products.map(p => p.revenue), backgroundColor: 'rgba(34,197,94,.6)', borderRadius: 4 }]
+      },
+      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8b90a5' } } },
+        scales: { x: { ticks: { color: '#8b90a5' }, grid: { color: '#2d3248' } }, y: { ticks: { color: '#8b90a5' }, grid: { display: false } } }
+      }
+    })
+
+    // Recent sales table
+    const tbody = document.querySelector('#recentSalesTable tbody')
+    tbody.innerHTML = d.recent_sales.map(s => `<tr><td>${s.customer_name||'—'}</td><td><span class="badge badge-blue">${s.payment_method}</span></td><td>${s.item_count}</td><td>Bs. ${parseFloat(s.total).toFixed(2)}</td><td class="text-sm">${new Date(s.created_at).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}</td></tr>`).join('')
+
+  } catch(e) { toast('Error al cargar dashboard: '+e.message, 'error') }
+}
+
+// ===== POS =====
+async function loadPos() {
+  try {
+    const [fish, methods] = await Promise.all([
+      api('GET', '/api/fish/available'),
+      api('GET', '/api/pos/payment-methods')
+    ])
+    state.posFish = fish.fish || fish
+    state.posMethods = methods.payment_methods || methods
+
+    // Build fish grid
+    const grid = document.getElementById('posFishGrid')
+    grid.innerHTML = state.posFish.map(f => `
+      <div class="pos-fish-item" data-fish='${JSON.stringify(f).replace(/'/g,"&#39;")}' onclick="addToCart(this)">
+        <div class="name">${f.fish_type_name}</div>
+        <div class="detail">${f.weight_grams}g · ${f.container_label}</div>
+        <div class="price">Bs. ${f.price_per_kg||'0'}/kg</div>
+      </div>
+    `).join('')
+
+    // Payment methods
+    const sel = document.getElementById('posPaymentMethod')
+    sel.innerHTML = state.posMethods.map(m => `<option value="${m.id}">${m.name}</option>`).join('')
+
+    // Customers datalist
+    try {
+      const cust = await api('GET', '/api/customers')
+      const cl = document.getElementById('customerList')
+      const list = cust.customers || cust
+      cl.innerHTML = list.map(c => `<option value="${c.name}">`).join('')
+    } catch {}
+
+    state.posCart = []
+    renderCart()
+  } catch(e) { toast('Error al cargar POS: '+e.message, 'error') }
+}
+
+function addToCart(el) {
+  const fish = JSON.parse(el.dataset.fish)
+  // Show preparation selection
+  let prepHtml = '<label style="font-size:12px;color:var(--text2);margin-bottom:4px">Preparación</label><select id="posPrepSelect">'
+  prepHtml += '<option value="">Sin preparación</option>'
+  fetch('/api/preparations').then(r=>r.json()).then(preps => {
+    const list = preps.preparations || preps
+    list.forEach(p => { prepHtml += `<option value="${p.id}" data-cost="${p.additional_cost}" data-cost-type="${p.cost_type}">${p.name} (+Bs. ${parseFloat(p.additional_cost).toFixed(2)})</option>` })
+    prepHtml += '</select>'
+    showModal(`
+      <h2>Agregar: ${fish.fish_type_name}</h2>
+      <p style="color:var(--text2);margin-bottom:16px">${fish.weight_grams}g · ${fish.container_label}</p>
+      <label style="font-size:12px;color:var(--text2);margin-bottom:4px">Peso (gramos)</label>
+      <input type="number" id="posWeight" value="${fish.weight_grams}" min="1" style="margin-bottom:8px">
+      ${prepHtml}
+      <label style="font-size:12px;color:var(--text2);margin-top:12px;margin-bottom:4px">Precio por Kg (Bs.)</label>
+      <input type="number" id="posPrice" value="${fish.price_per_kg||0}" step="0.01" min="0" style="margin-bottom:8px">
+      <div class="btn-row">
+        <button class="btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn-primary" onclick="confirmAddToCart('${fish.id}','${fish.fish_type_name}','${fish.container_id}','${fish.container_label}','${fish.fish_type_id}')">Agregar</button>
+      </div>
+    `)
+  })
+}
+
+function confirmAddToCart(fishId, fishName, containerId, containerLabel, fishTypeId) {
+  const weight = parseInt(document.getElementById('posWeight').value)
+  const pricePerKg = parseFloat(document.getElementById('posPrice').value) || 0
+  const prepSelect = document.getElementById('posPrepSelect')
+  const prepId = prepSelect ? prepSelect.value : ''
+  const prepName = prepSelect ? prepSelect.options[prepSelect.selectedIndex].text : ''
+  const adjCost = prepSelect && prepSelect.selectedIndex > 0 ? parseFloat(prepSelect.options[prepSelect.selectedIndex].dataset.cost) : 0
+  const subtotal = (weight / 1000) * pricePerKg + adjCost
+
+  state.posCart.push({
+    fish_item_id: fishId, fish_type_name: fishName, container_id: containerId,
+    container_label: containerLabel, fish_type_id: fishTypeId,
+    weight_grams: weight, price_per_kg: pricePerKg,
+    preparation_id: prepId, preparation_name: prepName, preparation_fee: adjCost,
+    subtotal
+  })
+  closeModal()
+  renderCart()
+}
+
+function renderCart() {
+  const items = document.getElementById('cartItems')
+  if (!state.posCart.length) {
+    items.innerHTML = '<div class="empty-state"><i class="fas fa-shopping-cart"></i><p>Carrito vacío</p></div>'
+  } else {
+    items.innerHTML = state.posCart.map((item,i) => `
+      <div class="pos-cart-item">
+        <div><strong>${item.fish_type_name}</strong><br><span style="font-size:11px;color:var(--text2)">${item.weight_grams}g · ${item.preparation_name||'—'}</span></div>
+        <div style="text-align:right">
+          <div>Bs. ${item.subtotal.toFixed(2)}</div>
+          <span class="remove" onclick="removeFromCart(${i})"><i class="fas fa-times"></i></span>
+        </div>
+      </div>
+    `).join('')
+  }
+  const subtotal = state.posCart.reduce((s,i) => s + (i.weight_grams/1000)*i.price_per_kg, 0)
+  const prepFee = state.posCart.reduce((s,i) => s + (i.preparation_fee||0), 0)
+  const ivaRate = parseFloat(document.getElementById('posIvaRate').value) || 16
+  const discount = parseFloat(document.getElementById('posDiscount').value) || 0
+  const base = subtotal + prepFee
+  const taxable = Math.max(0, base - discount)
+  const taxAmount = taxable * ivaRate / 100
+  const total = taxable + taxAmount
+  document.getElementById('cartCount').textContent = state.posCart.length + ' items'
+  document.getElementById('cartSubtotal').textContent = `Bs. ${subtotal.toFixed(2)}`
+  document.getElementById('cartPrepFee').textContent = `Bs. ${prepFee.toFixed(2)}`
+  document.getElementById('cartDiscount').textContent = `Bs. ${discount.toFixed(2)}`
+  document.getElementById('cartTax').textContent = `Bs. ${taxAmount.toFixed(2)}`
+  document.getElementById('cartTotal').textContent = `Bs. ${total.toFixed(2)}`
+}
+
+function removeFromCart(idx) { state.posCart.splice(idx, 1); renderCart() }
+document.getElementById('posIvaRate').addEventListener('input', renderCart)
+document.getElementById('posDiscount').addEventListener('input', renderCart)
+
+async function readScale() {
+  try {
+    const r = await api('GET', '/api/scale/read')
+    document.getElementById('scaleDisplay').textContent = (r.weight_grams || 0) + ' g'
+    toast(`Peso: ${r.weight_grams}g`, 'success')
+  } catch { toast('Báscula no disponible', 'error') }
+}
+
+async function confirmSale() {
+  if (!state.posCart.length) return toast('Carrito vacío', 'error')
+  const methodId = document.getElementById('posPaymentMethod').value
+  const customerName = document.getElementById('posCustomer').value
+  const ivaRate = parseFloat(document.getElementById('posIvaRate').value) || 16
+  const discount = parseFloat(document.getElementById('posDiscount').value) || 0
+  try {
+    const calc = await api('POST', '/api/pos/calculate', {
+      items: state.posCart.map(i => ({ fish_item_id: i.fish_item_id, preparation_id: i.preparation_id || null })),
+      iva_rate: ivaRate, discount: discount
+    })
+    await api('POST', '/api/pos/confirm', {
+      items: state.posCart.map(i => ({
+        fish_item_id: i.fish_item_id, container_id: i.container_id,
+        weight_grams: i.weight_grams, price_per_kg: i.price_per_kg,
+        preparation_id: i.preparation_id || null,
+        preparation_name: i.preparation_name || null,
+        preparation_fee: i.preparation_fee || 0
+      })),
+      payment_method_id: methodId, customer_id: null,
+      iva_rate: ivaRate, discount: discount,
+      tax_amount: calc.tax_amount, discount_amount: calc.discount_amount
+    })
+    toast('Venta confirmada!', 'success')
+    state.posCart = []
+    renderCart()
+    loadPos()
+  } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+// ===== INVENTORY =====
+async function loadInventory() {
+  try {
+    const [containers, fish, prices, types] = await Promise.all([
+      api('GET', '/api/containers'),
+      api('GET', '/api/fish/available'),
+      api('GET', '/api/market-prices'),
+      api('GET', '/api/fish-types')
+    ])
+    const contList = containers.containers || containers
+    const fishList = fish.fish || fish
+    const priceList = prices.market_prices || prices
+
+    // Containers
+    const grid = document.getElementById('containerGrid')
+    grid.innerHTML = contList.map(c => {
+      const pct = c.capacity > 0 ? (c.current_count/c.capacity*100) : 0
+      const barClass = pct > 80 ? 'red' : pct > 50 ? 'yellow' : 'green'
+      return `<div class="inv-card">
+        <h4>${c.label}</h4>
+        <div class="inv-type">${c.fish_type_name} · ${c.location||'—'}</div>
+        <div class="inv-bar"><div class="inv-bar-fill ${barClass}" style="width:${Math.min(pct,100)}%"></div></div>
+        <div class="inv-stats"><span>${c.current_count}/${c.capacity}</span><span>${pct.toFixed(0)}%</span></div>
+      </div>`
+    }).join('')
+
+    // Fish available
+    const ftbody = document.querySelector('#fishTable tbody')
+    ftbody.innerHTML = fishList.map(f => `<tr><td>${f.fish_type_name}</td><td>${f.container_label}</td><td>${f.weight_grams}g</td><td class="text-sm">${new Date(f.added_at).toLocaleDateString('es-VE')}</td><td><button class="btn-danger btn-sm" onclick="removeFish('${f.id}')"><i class="fas fa-trash"></i></button></td></tr>`).join('')
+
+    // Prices
+    const ptbody = document.querySelector('#priceTable tbody')
+    ptbody.innerHTML = priceList.map(p => {
+      const price = parseFloat(p.price_per_kg) || 0
+      const cost = parseFloat(p.cost_price) || 0
+      const margin = price > 0 ? ((price-cost)/price*100).toFixed(0) : '—'
+      return `<tr><td>${p.fish_type_name}</td><td>Bs. ${price.toFixed(2)}</td><td>Bs. ${cost.toFixed(2)}</td><td><span class="badge badge-green">${margin}%</span></td><td class="text-sm">${new Date(p.effective_from).toLocaleDateString('es-VE')}</td></tr>`
+    }).join('')
+
+    // Types
+    const ttbody = document.querySelector('#fishTypeTable tbody')
+    const typeList = types.fish_types || types
+    ttbody.innerHTML = (typeList||[]).map(t => `<tr><td>${t.name}</td><td>${t.species||'—'}</td><td><span class="badge badge-blue">${t.category||'—'}</span></td></tr>`).join('')
+
+  } catch(e) { toast('Error al cargar inventario: '+e.message, 'error') }
+}
+
+// Inventory tabs
+document.querySelectorAll('#invTabs .tab').forEach(t => t.addEventListener('click', function() {
+  document.querySelectorAll('#invTabs .tab').forEach(x => x.classList.remove('active'))
+  this.classList.add('active')
+  document.querySelectorAll('.invTab').forEach(x => x.style.display = 'none')
+  document.getElementById('invTab' + this.dataset.invtab.charAt(0).toUpperCase() + this.dataset.invtab.slice(1)).style.display = 'block'
+}))
+
+async function removeFish(id) {
+  if (!confirm('Eliminar este pez del inventario?')) return
+  try { await api('DELETE', `/api/fish/${id}`); toast('Eliminado', 'success'); loadInventory() }
+  catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+function showAddFishModal() {
+  api('GET','/api/containers').then(r => {
+    const containers = r.containers || r
+    let html = '<h2>Agregar Pescado</h2>'
+    html += '<label>Tanque</label><select id="mfContainer"><option value="">Seleccionar...</option>'
+    containers.forEach(c => { html += `<option value="${c.id}" data-type="${c.fish_type_id}" data-type-name="${c.fish_type_name}" data-label="${c.label}">${c.label} — ${c.fish_type_name}</option>` })
+    html += '</select>'
+    html += '<label>Tipo de Pescado</label><input type="text" id="mfFishType" readonly style="color:var(--text2)">'
+    html += '<label>Peso (gramos)</label><input type="number" id="mfWeight" min="1" value="500">'
+    html += '<label>Costo (opcional)</label><input type="number" id="mfCost" step="0.01" min="0">'
+    html += '<div class="btn-row"><button class="btn-outline" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="doAddFish()">Agregar</button></div>'
+    showModal(html)
+    document.getElementById('mfContainer').addEventListener('change', function() {
+      const opt = this.options[this.selectedIndex]
+      document.getElementById('mfFishType').value = opt.dataset.typeName || ''
+    })
+  })
+}
+
+async function doAddFish() {
+  const sel = document.getElementById('mfContainer')
+  const containerId = sel.value
+  if (!containerId) return toast('Seleccione un tanque', 'error')
+  const opt = sel.options[sel.selectedIndex]
+  try {
+    await api('POST', '/api/fish', {
+      container_id: containerId,
+      fish_type_id: opt.dataset.type,
+      fish_type_name: opt.dataset.typeName,
+      weight_grams: parseInt(document.getElementById('mfWeight').value) || 500,
+      cost_price: document.getElementById('mfCost').value || null
+    })
+    closeModal(); toast('Pescado agregado!', 'success'); loadInventory()
+  } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+function showPriceModal() {
+  api('GET','/api/fish-types').then(r => {
+    const types = r.fish_types || r
+    let html = '<h2>Nuevo Precio de Mercado</h2>'
+    html += '<label>Especie</label><select id="mpType"><option value="">Seleccionar...</option>'
+    types.forEach(t => { html += `<option value="${t.id}" data-name="${t.name}">${t.name}</option>` })
+    html += '</select>'
+    html += '<label>Precio por Kg (Bs.)</label><input type="number" id="mpPrice" step="0.01" min="0">'
+    html += '<label>Costo por Kg (Bs.)</label><input type="number" id="mpCost" step="0.01" min="0">'
+    html += '<div class="btn-row"><button class="btn-outline" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="doSetPrice()">Guardar</button></div>'
+    showModal(html)
+  })
+}
+
+async function doSetPrice() {
+  const sel = document.getElementById('mpType')
+  if (!sel.value) return toast('Seleccione especie', 'error')
+  const opt = sel.options[sel.selectedIndex]
+  try {
+    await api('POST', '/api/market-prices', {
+      fish_type_id: sel.value,
+      fish_type_name: opt.dataset.name,
+      price_per_kg: parseFloat(document.getElementById('mpPrice').value) || 0
+    })
+    closeModal(); toast('Precio guardado!', 'success'); loadInventory()
+  } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+// ===== CUSTOMERS =====
+async function loadCustomers() {
+  try {
+    const r = await api('GET', '/api/customers')
+    const list = r.customers || r
+    const tbody = document.querySelector('#customerTable tbody')
+    tbody.innerHTML = list.map(c => `<tr>
+      <td>${c.name}</td><td>${c.phone||'—'}</td><td>${c.rif||'—'}</td><td>${c.email||'—'}</td>
+      <td><span class="badge badge-yellow">${c.points||0}</span></td>
+      <td><button class="btn-outline btn-sm" onclick="editCustomer('${c.id}')"><i class="fas fa-edit"></i></button></td>
+    </tr>`).join('')
+  } catch(e) { toast('Error al cargar clientes: '+e.message, 'error') }
+}
+
+function showCustomerModal(cust) {
+  let html = `<h2>${cust ? 'Editar' : 'Nuevo'} Cliente</h2>`
+  html += '<label>Nombre</label><input type="text" id="cName" value="'+(cust?cust.name:'')+'" required>'
+  html += '<label>Teléfono</label><input type="text" id="cPhone" value="'+(cust?cust.phone||'':'')+'">'
+  html += '<label>RIF</label><input type="text" id="cRif" value="'+(cust?cust.rif||'':'')+'">'
+  html += '<label>Email</label><input type="email" id="cEmail" value="'+(cust?cust.email||'':'')+'">'
+  html += '<label>Dirección</label><textarea id="cAddr" rows="2">'+(cust?cust.address||'':'')+'</textarea>'
+  html += '<div class="btn-row"><button class="btn-outline" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="doSaveCustomer(\''+(cust?cust.id:'')+'\')">Guardar</button></div>'
+  showModal(html)
+}
+
+function editCustomer(id) {
+  api('GET', `/api/customers/${id}`).then(r => showCustomerModal(r)).catch(e => toast('Error: '+e.message, 'error'))
+}
+
+async function doSaveCustomer(id) {
+  const data = { name: document.getElementById('cName').value, phone: document.getElementById('cPhone').value, rif: document.getElementById('cRif').value, email: document.getElementById('cEmail').value, address: document.getElementById('cAddr').value }
+  try {
+    if (id) { await api('PUT', `/api/customers/${id}`, data) }
+    else { await api('POST', '/api/customers', data) }
+    closeModal(); toast('Cliente guardado!', 'success'); loadCustomers()
+  } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+// ===== SUPPLIERS =====
+async function loadSuppliers() {
+  try {
+    const [sup, del] = await Promise.all([
+      api('GET', '/api/suppliers'),
+      api('GET', '/api/suppliers/deliveries')
+    ])
+    const supList = sup.suppliers || sup
+    const delList = del.deliveries || del
+
+    const tbody = document.querySelector('#supplierTable tbody')
+    tbody.innerHTML = supList.map(s => `<tr>
+      <td>${s.name} ${s.is_self?'<span class="badge badge-green">Auto</span>':''}</td>
+      <td>${s.rif||'—'}</td><td>${s.phone||'—'}</td><td>${s.contact_person||'—'}</td>
+      <td><button class="btn-outline btn-sm" onclick="editSupplier('${s.id}')"><i class="fas fa-edit"></i></button></td>
+    </tr>`).join('')
+
+    const dtbody = document.querySelector('#deliveryTable tbody')
+    dtbody.innerHTML = delList.map(d => `<tr>
+      <td>${d.supplier_name}</td>
+      <td class="text-sm">${new Date(d.delivery_date).toLocaleDateString('es-VE')}</td>
+      <td>Bs. ${parseFloat(d.total_cost||0).toFixed(2)}</td>
+      <td>${d.transport_plate||'—'}</td>
+      <td class="text-sm">${d.notes||''}</td>
+    </tr>`).join('')
+  } catch(e) { toast('Error al cargar proveedores: '+e.message, 'error') }
+}
+
+// Supplier tabs
+document.querySelectorAll('#supTabs .tab').forEach(t => t.addEventListener('click', function() {
+  document.querySelectorAll('#supTabs .tab').forEach(x => x.classList.remove('active'))
+  this.classList.add('active')
+  document.querySelectorAll('.supTab').forEach(x => x.style.display = 'none')
+  document.getElementById('supTab' + this.dataset.suptab.charAt(0).toUpperCase() + this.dataset.suptab.slice(1)).style.display = 'block'
+}))
+
+function showSupplierModal(sup) {
+  let html = `<h2>${sup?'Editar':'Nuevo'} Proveedor</h2>`
+  html += '<label>Nombre</label><input type="text" id="sName" value="'+(sup?sup.name:'')+'" required>'
+  html += '<label>RIF</label><input type="text" id="sRif" value="'+(sup?sup.rif||'':'')+'">'
+  html += '<label>Teléfono</label><input type="text" id="sPhone" value="'+(sup?sup.phone||'':'')+'">'
+  html += '<label>Email</label><input type="email" id="sEmail" value="'+(sup?sup.email||'':'')+'">'
+  html += '<label>Contacto</label><input type="text" id="sContact" value="'+(sup?sup.contact_person||'':'')+'">'
+  html += '<label>Dirección</label><textarea id="sAddr" rows="2">'+(sup?sup.address||'':'')+'</textarea>'
+  html += '<div class="btn-row"><button class="btn-outline" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="doSaveSupplier(\''+(sup?sup.id:'')+'\')">Guardar</button></div>'
+  showModal(html)
+}
+
+function editSupplier(id) {
+  api('GET', `/api/suppliers/${id}`).then(r => showSupplierModal(r)).catch(e => toast('Error: '+e.message, 'error'))
+}
+
+async function doSaveSupplier(id) {
+  const data = { name: document.getElementById('sName').value, phone: document.getElementById('sPhone').value, rif: document.getElementById('sRif').value, email: document.getElementById('sEmail').value, contact_person: document.getElementById('sContact').value, address: document.getElementById('sAddr').value }
+  try {
+    if (id) { await api('PUT', `/api/suppliers/${id}`, data) }
+    else { await api('POST', '/api/suppliers', data) }
+    closeModal(); toast('Proveedor guardado!', 'success'); loadSuppliers()
+  } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+function showDeliveryModal() {
+  api('GET','/api/suppliers').then(r => {
+    const list = r.suppliers || r
+    let html = '<h2>Nueva Recepción</h2>'
+    html += '<label>Proveedor</label><select id="dSupplier"><option value="">Seleccionar...</option>'
+    list.forEach(s => { html += `<option value="${s.id}" data-name="${s.name}">${s.name}</option>` })
+    html += '</select>'
+    html += '<label>Placa Transporte</label><input type="text" id="dPlate">'
+    html += '<label>Conductor</label><input type="text" id="dDriver">'
+    html += '<label>Notas</label><textarea id="dNotes" rows="2"></textarea>'
+    html += '<div class="btn-row"><button class="btn-outline" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="doCreateDelivery()">Crear</button></div>'
+    showModal(html)
+  })
+}
+
+async function doCreateDelivery() {
+  const sel = document.getElementById('dSupplier')
+  if (!sel.value) return toast('Seleccione proveedor', 'error')
+  const opt = sel.options[sel.selectedIndex]
+  try {
+    await api('POST', '/api/suppliers/deliveries', {
+      supplier_id: sel.value,
+      supplier_name: opt.dataset.name,
+      transport_plate: document.getElementById('dPlate').value,
+      transport_driver: document.getElementById('dDriver').value,
+      notes: document.getElementById('dNotes').value
+    })
+    closeModal(); toast('Recepción creada!', 'success'); loadSuppliers()
+  } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+// ===== SALES =====
+async function loadSales() {
+  try {
+    const r = await api('GET', '/api/sales?limit=100')
+    const list = r.sales || r
+    const tbody = document.querySelector('#salesTable tbody')
+    tbody.innerHTML = list.map(s => `<tr>
+      <td>${s.customer_name||'—'}</td>
+      <td><span class="badge badge-blue">${s.payment_method}</span></td>
+      <td>${s.item_count}</td>
+      <td><strong>Bs. ${parseFloat(s.total).toFixed(2)}</strong></td>
+      <td class="text-sm">${new Date(s.created_at).toLocaleString('es-VE')}</td>
+      <td><button class="btn-outline btn-sm" onclick="showSaleDetail('${s.id}')"><i class="fas fa-eye"></i></button></td>
+    </tr>`).join('')
+  } catch(e) { toast('Error al cargar ventas: '+e.message, 'error') }
+}
+
+async function showSaleDetail(id) {
+  try {
+    const r = await api('GET', `/api/sales/${id}`)
+    const s = r.sale
+    let html = `<h2>Venta #${s.id.slice(0,8)}</h2>`
+    html += `<p style="color:var(--text2);margin-bottom:12px">${new Date(s.created_at).toLocaleString('es-VE')}</p>`
+    html += `<div style="margin-bottom:12px"><span class="badge badge-blue">${s.payment_method}</span>`
+    if (s.customer_name) html += ` <span class="badge badge-yellow">${s.customer_name}</span>`
+    html += '</div>'
+    html += '<table><thead><tr><th>Producto</th><th>Peso</th><th>Precio/Kg</th><th>Prep</th><th>Subtotal</th></tr></thead><tbody>'
+    ;(r.items||[]).forEach(i => {
+      html += `<tr><td>${i.fish_type}</td><td>${i.weight_grams}g</td><td>Bs. ${parseFloat(i.price_per_kg).toFixed(2)}</td><td>${i.preparation||'—'}</td><td>Bs. ${parseFloat(i.subtotal).toFixed(2)}</td></tr>`
+    })
+    html += '</tbody></table>'
+    html += `<div style="margin-top:12px;text-align:right;font-size:18px;font-weight:700">Total: Bs. ${parseFloat(s.total).toFixed(2)}</div>`
+    html += '<div class="btn-row"><button class="btn-outline" onclick="closeModal()">Cerrar</button></div>'
+    showModal(html)
+  } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+// ===== SETTINGS =====
+async function loadSettings() {
+  try {
+    const me = await api('GET', '/api/auth/me')
+    document.getElementById('settingsUser').innerHTML = `
+      <div style="margin-bottom:8px"><strong>Usuario:</strong> ${me.username}</div>
+      <div style="margin-bottom:8px"><strong>Nombre:</strong> ${me.display_name||'—'}</div>
+      <div style="margin-bottom:8px"><strong>Rol:</strong> <span class="badge badge-blue">${me.role}</span></div>
+      <div><strong>Token:</strong> <span style="font-size:11px;color:var(--text2)">${state.token ? state.token.slice(0,20)+'...' : '—'}</span></div>
+    `
+    document.getElementById('settingsSystem').innerHTML = `
+      <div style="margin-bottom:8px"><strong>API:</strong> ${window.location.origin}</div>
+      <div style="margin-bottom:8px"><strong>Estado:</strong> <span class="badge badge-green">En línea</span></div>
+      <div><strong>Frontend:</strong> SPA (Vanilla JS)</div>
+    `
+    const sync = await api('GET', '/api/sync/status')
+    document.getElementById('settingsSync').innerHTML = `
+      <div style="margin-bottom:8px"><strong>Pendientes:</strong> ${sync.pending_count||0}</div>
+      <div style="margin-bottom:8px"><strong>Última sync:</strong> ${sync.last_synced_at ? new Date(sync.last_synced_at).toLocaleString('es-VE') : 'Nunca'}</div>
+      <button class="btn-primary btn-sm" onclick="triggerSync()"><i class="fas fa-sync"></i> Sincronizar Ahora</button>
+    `
+    document.getElementById('syncBadge').textContent = (sync.pending_count||0) + ' pendientes'
+  } catch(e) { toast('Error al cargar configuración: '+e.message, 'error') }
+}
+
+async function triggerSync() {
+  try { await api('POST', '/api/sync/trigger'); toast('Sincronización iniciada!', 'success'); loadSettings() }
+  catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+// ===== MODAL =====
+function showModal(html) {
+  document.getElementById('modalContent').innerHTML = html
+  document.getElementById('modalOverlay').classList.add('open')
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open') }
+document.getElementById('modalOverlay').addEventListener('click', function(e) { if (e.target === this) closeModal() })
+
+// ===== CLOCK =====
+function updateClock() {
+  document.getElementById('headerTime').textContent = new Date().toLocaleString('es-VE', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+}
+setInterval(updateClock, 1000)
+
+// ===== INIT =====
+async function initApp() {
+  navigate('dashboard')
+  updateClock()
+}
+
+// Check session on load
+(async function() {
+  const saved = sessionStorage.getItem('fishr_token')
+  if (saved) {
+    state.token = saved
+    try {
+      const me = await api('GET', '/api/auth/me')
+      state.user = me
+      document.getElementById('loginPage').style.display = 'none'
+      document.getElementById('sidebarUserName').textContent = me.display_name || me.username
+      document.getElementById('sidebarUserIcon').textContent = (me.display_name || me.username)[0].toUpperCase()
+      initApp()
+      return
+    } catch { state.token = null }
+  }
+})()
+
+// Intercept API calls to save token
+const origFetch = window.fetch
+window.fetch = function() { return origFetch.apply(this, arguments) }
+
+const origApi = api
+window.api = async function(method, path, body) {
+  const result = await origApi(method, path, body)
+  if (path === '/api/auth/login' && result && result.token) {
+    sessionStorage.setItem('fishr_token', result.token)
+  }
+  return result
+}
+</script>
+</body>
 </html>

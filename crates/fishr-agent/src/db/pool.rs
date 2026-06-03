@@ -51,6 +51,7 @@ impl Database {
         self.exec_multi("002_seed", include_str!("migrations/002_seed.sql")).await?;
         self.exec_multi("003_supplier", include_str!("migrations/003_supplier.sql")).await?;
         self.exec_multi("004_auth", include_str!("migrations/004_auth.sql")).await?;
+        self.exec_multi("005_iva_discount", include_str!("migrations/005_iva_discount.sql")).await?;
 
         Ok(())
     }

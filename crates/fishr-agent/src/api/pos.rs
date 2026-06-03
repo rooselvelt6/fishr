@@ -1,5 +1,6 @@
 use axum::extract::State;
 use axum::Json;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use fishr_core::models::*;
@@ -11,6 +12,9 @@ pub struct CalculatedSale {
     pub items: Vec<CalculatedItem>,
     pub subtotal: f64,
     pub preparation_fee: f64,
+    pub discount_amount: f64,
+    pub tax_amount: f64,
+    pub iva_rate: f64,
     pub total: f64,
 }
 
@@ -30,6 +34,8 @@ pub struct CalculatedItem {
 #[derive(Deserialize)]
 pub struct CalculateRequest {
     pub items: Vec<CalculateItemRequest>,
+    pub iva_rate: Option<f64>,
+    pub discount: Option<f64>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -43,6 +49,10 @@ pub struct ConfirmSaleRequest {
     pub customer_id: Option<String>,
     pub payment_method_id: String,
     pub items: Vec<ConfirmSaleItem>,
+    pub iva_rate: Option<f64>,
+    pub discount: Option<f64>,
+    pub tax_amount: Option<f64>,
+    pub discount_amount: Option<f64>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -161,10 +171,20 @@ pub async fn calculate_sale(
         });
     }
 
+    let iva_rate = req.iva_rate.unwrap_or(16.0).max(0.0).min(100.0);
+    let discount = req.discount.unwrap_or(0.0).max(0.0);
+    let base = subtotal_total + prep_total;
+    let taxable_base = (base - discount).max(0.0);
+    let tax_amount = taxable_base * iva_rate / 100.0;
+    let total = taxable_base + tax_amount;
+
     Ok(Json(CalculatedSale {
-        total: subtotal_total + prep_total,
+        total,
         subtotal: subtotal_total,
         preparation_fee: prep_total,
+        discount_amount: discount,
+        tax_amount,
+        iva_rate,
         items,
     }))
 }
@@ -252,6 +272,25 @@ pub async fn confirm_sale(
         ));
     }
 
+    // Compute sale totals with IVA and discount
+    let iva_rate = req.iva_rate.unwrap_or(16.0).max(0.0).min(100.0);
+    let discount_amount_val = req.discount_amount.unwrap_or(req.discount.unwrap_or(0.0)).max(0.0);
+    let tax_amount_val = req.tax_amount.unwrap_or_else(|| {
+        let base: f64 = sale_items.iter().map(|i| {
+            let sub = i.subtotal.to_f64().unwrap_or(0.0);
+            let prep = i.preparation_fee.to_f64().unwrap_or(0.0);
+            sub + prep
+        }).sum::<f64>();
+        let taxable = (base - discount_amount_val).max(0.0);
+        taxable * iva_rate / 100.0
+    });
+
+    let sale_total = sale_items.iter().map(|i| {
+        let sub = i.subtotal.to_f64().unwrap_or(0.0);
+        let prep = i.preparation_fee.to_f64().unwrap_or(0.0);
+        sub + prep
+    }).sum::<f64>() - discount_amount_val + tax_amount_val;
+
     let sale = Sale::with_id(
         sale_id.clone(),
         state.config.branch_id.clone(),
@@ -262,11 +301,11 @@ pub async fn confirm_sale(
         &sale_items,
     );
 
-    // Insert sale
+    // Insert sale with IVA and discount
     sqlx::query(
         "INSERT INTO sale (id, branch_id, customer_id, customer_name, payment_method_id, payment_method_name,
-         subtotal, preparation_fee, total, item_count, created_at, op_counter, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
+         subtotal, preparation_fee, tax_amount, discount_amount, iva_rate, total, item_count, created_at, op_counter, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
     )
     .bind(&sale.id)
     .bind(&sale.branch_id)
@@ -276,7 +315,10 @@ pub async fn confirm_sale(
     .bind(&sale.payment_method_name)
     .bind(sale.subtotal.to_string())
     .bind(sale.preparation_fee.to_string())
-    .bind(sale.total.to_string())
+    .bind(tax_amount_val.to_string())
+    .bind(discount_amount_val.to_string())
+    .bind(iva_rate)
+    .bind(sale_total.to_string())
     .bind(sale.item_count)
     .bind(sale.created_at)
     .bind(sale.op_counter)
@@ -355,13 +397,13 @@ pub async fn confirm_sale(
         None,
         None,
         control,
-        sale.total,
+        rust_decimal::Decimal::from_f64_retain(sale_total).unwrap_or_default(),
     );
 
     sqlx::query(
         "INSERT INTO invoice (id, branch_id, sale_id, customer_id, customer_name, customer_rif, customer_address,
-         control_number, total, issued_at, op_counter, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+         control_number, total, tax_amount, issued_at, op_counter, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
     )
     .bind(&invoice.id)
     .bind(&invoice.branch_id)
@@ -372,6 +414,7 @@ pub async fn confirm_sale(
     .bind(&invoice.customer_address)
     .bind(&invoice.control_number)
     .bind(invoice.total.to_string())
+    .bind(tax_amount_val.to_string())
     .bind(invoice.issued_at)
     .bind(invoice.op_counter)
     .bind(invoice.updated_at)

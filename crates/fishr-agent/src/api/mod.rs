@@ -1,8 +1,9 @@
+pub mod analytics;
 pub mod auth;
+pub mod customers;
 pub mod error;
 pub mod inventory;
 pub mod pos;
-pub mod customers;
 pub mod rate_limit;
 pub mod reports;
 pub mod router;
