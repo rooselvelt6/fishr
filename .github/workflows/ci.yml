@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build fishr-core
+        run: cargo build -p fishr-core
+
+      - name: Build fishr-agent (no frontend)
+        run: cargo build -p fishr-agent --no-default-features
+
+      - name: Build fishr-agent (frontend)
+        run: cargo build -p fishr-agent --features frontend --no-default-features
+
+      - name: Build fishr-central
+        run: cargo build -p fishr-central
+
+      - name: Run core tests
+        run: cargo test -p fishr-core
+
+      - name: Run agent integration tests
+        run: cargo test -p fishr-agent --test api_test --no-default-features
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings

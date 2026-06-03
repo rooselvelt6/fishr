@@ -1,0 +1,7 @@
+/target
+.env
+*.swp
+*.swo
+__pycache__/
+.DS_Store
+

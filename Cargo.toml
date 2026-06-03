@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/fishr-core", "crates/fishr-agent", "crates/fishr-central"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+ulid = "1"
+rust_decimal = { version = "1", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "set-header"] }
+rayon = "1.10"
+reqwest = { version = "0.12", features = ["json"] }
+thiserror = "2"
+anyhow = "1"

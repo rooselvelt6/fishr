@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fishr
+      POSTGRES_PASSWORD: fishr
+      POSTGRES_DB: fishr_central
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fishr"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  central:
+    build:
+      context: .
+      dockerfile: crates/fishr-central/Dockerfile
+    ports:
+      - "9090:9090"
+    environment:
+      DATABASE_URL: postgres://fishr:fishr@postgres:5432/fishr_central
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
