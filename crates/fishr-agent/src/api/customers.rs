@@ -63,7 +63,7 @@ pub async fn create_customer(
     .execute(&state.db.pool)
     .await?;
 
-    crate::api::inventory::push_sync(&state, "Customer", &c).await;
+    crate::sync::push_sync(&state, "Customer", &c).await;
     Ok(Json(c))
 }
 
@@ -116,7 +116,7 @@ pub async fn update_customer(
     .await?;
 
     let c = row.into_model();
-    crate::api::inventory::push_sync(&state, "Customer", &c).await;
+    crate::sync::push_sync(&state, "Customer", &c).await;
     Ok(Json(c))
 }
 

@@ -1,11 +1,8 @@
 use axum::extract::{Path, State};
 use axum::Json;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
-use chrono::{Timelike, Datelike};
 use fishr_core::models::*;
-use fishr_core::fuzzy::sets::*;
-use fishr_core::fuzzy::suggestions::*;
 use crate::api::error::{ApiResult, ApiError, validate_not_empty, validate_positive_i32, validate_weight, validate_non_negative_f64};
 use crate::state::AppState;
 
@@ -83,7 +80,7 @@ pub async fn create_container(
     .execute(&state.db.pool)
     .await?;
 
-    push_sync(&state, "Container", &container).await;
+    crate::sync::push_sync(&state, "Container", &container).await;
     Ok(Json(container))
 }
 
@@ -131,7 +128,7 @@ pub async fn update_container(
     .await?;
 
     let container = row.into_model();
-    push_sync(&state, "Container", &container).await;
+    crate::sync::push_sync(&state, "Container", &container).await;
     Ok(Json(container))
 }
 
@@ -211,7 +208,7 @@ pub async fn add_fish(
         .execute(&state.db.pool)
         .await?;
 
-        push_sync(&state, "FishItem", &fish).await;
+        crate::sync::push_sync(&state, "FishItem", &fish).await;
         items.push(fish);
     }
 
@@ -294,7 +291,7 @@ pub async fn create_fish_type(
     .execute(&state.db.pool)
     .await?;
 
-    push_sync(&state, "FishType", &fish_type).await;
+    crate::sync::push_sync(&state, "FishType", &fish_type).await;
     Ok(Json(fish_type))
 }
 
@@ -337,7 +334,7 @@ pub async fn update_fish_type(
     .await?;
 
     let fish_type = row.into_model();
-    push_sync(&state, "FishType", &fish_type).await;
+    crate::sync::push_sync(&state, "FishType", &fish_type).await;
     Ok(Json(fish_type))
 }
 
@@ -421,7 +418,7 @@ pub async fn set_market_price(
     .execute(&state.db.pool)
     .await?;
 
-    push_sync(&state, "MarketPrice", &mp).await;
+    crate::sync::push_sync(&state, "MarketPrice", &mp).await;
     Ok(Json(mp))
 }
 
@@ -469,20 +466,20 @@ impl FishTypeRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct ContainerRow {
-    id: String,
-    branch_id: String,
-    fish_type_id: String,
-    fish_type_name: String,
-    label: String,
-    capacity: i32,
-    current_count: i32,
-    location: String,
-    is_active: bool,
-    op_counter: i64,
-    updated_at: String,
-    synced_at: Option<String>,
-    deleted_at: Option<String>,
+pub(crate) struct ContainerRow {
+    pub(crate) id: String,
+    pub(crate) branch_id: String,
+    pub(crate) fish_type_id: String,
+    pub(crate) fish_type_name: String,
+    pub(crate) label: String,
+    pub(crate) capacity: i32,
+    pub(crate) current_count: i32,
+    pub(crate) location: String,
+    pub(crate) is_active: bool,
+    pub(crate) op_counter: i64,
+    pub(crate) updated_at: String,
+    pub(crate) synced_at: Option<String>,
+    pub(crate) deleted_at: Option<String>,
 }
 
 impl ContainerRow {
@@ -559,19 +556,19 @@ impl FishItemRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct MarketPriceRow {
-    id: String,
-    branch_id: String,
-    fish_type_id: String,
-    fish_type_name: String,
-    price_per_kg: f64,
-    cost_price: f64,
-    effective_from: String,
-    effective_to: Option<String>,
-    op_counter: i64,
-    updated_at: String,
-    synced_at: Option<String>,
-    deleted_at: Option<String>,
+pub(crate) struct MarketPriceRow {
+    pub(crate) id: String,
+    pub(crate) branch_id: String,
+    pub(crate) fish_type_id: String,
+    pub(crate) fish_type_name: String,
+    pub(crate) price_per_kg: f64,
+    pub(crate) cost_price: f64,
+    pub(crate) effective_from: String,
+    pub(crate) effective_to: Option<String>,
+    pub(crate) op_counter: i64,
+    pub(crate) updated_at: String,
+    pub(crate) synced_at: Option<String>,
+    pub(crate) deleted_at: Option<String>,
 }
 
 impl MarketPriceRow {
@@ -605,158 +602,4 @@ impl MarketPriceRow {
     }
 }
 
-#[derive(Serialize)]
-pub struct SuggestedPrice {
-    pub fish_type_id: String,
-    pub fish_type_name: String,
-    pub base_price: f64,
-    pub suggested_price: f64,
-    pub factor: f64,
-    pub reasons: Vec<String>,
-}
 
-pub async fn suggested_prices(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Vec<SuggestedPrice>> {
-    let now = chrono::Utc::now();
-    let hour = now.hour() as f64;
-
-    // Get stock per fish type
-    let containers = sqlx::query_as::<_, ContainerRow>(
-        "SELECT id, branch_id, fish_type_id, fish_type_name, label, capacity, current_count,
-                location, is_active, op_counter, updated_at, synced_at, deleted_at
-         FROM container WHERE deleted_at IS NULL AND is_active = 1"
-    )
-    .fetch_all(&state.db.pool)
-    .await?;
-
-    // Aggregate stock by fish type
-    let mut stock_by_type: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
-    for c in &containers {
-        let entry = stock_by_type.entry(c.fish_type_id.clone()).or_insert((0, 0));
-        entry.0 += c.current_count as i64;
-        entry.1 += c.capacity as i64;
-    }
-
-    // Get today's sales for demand
-    let today_start = now.format("%Y-%m-%dT00:00:00").to_string();
-    let today_sales: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sale WHERE created_at >= ?1"
-    )
-    .bind(&today_start)
-    .fetch_one(&state.db.pool)
-    .await
-    .unwrap_or(0);
-    let hourly_demand_pct = (today_sales as f64 / 24.0).min(100.0);
-
-    // Get weekly sales per fish type for popularity
-    let week_ago = (now - chrono::Duration::days(7)).format("%Y-%m-%dT%H:%M:%S").to_string();
-    let total_items_sold: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sale_item WHERE updated_at >= ?1"
-    )
-    .bind(&week_ago)
-    .fetch_one(&state.db.pool)
-    .await
-    .unwrap_or(1).max(1);
-
-    let engine = build_pricing_engine();
-
-    let mut results = Vec::new();
-
-    // Get all active market prices
-    let prices = sqlx::query_as::<_, MarketPriceRow>(
-        "SELECT id, branch_id, fish_type_id, fish_type_name, price_per_kg, cost_price,
-                effective_from, effective_to, op_counter, updated_at, synced_at, deleted_at
-         FROM market_price WHERE effective_to IS NULL AND deleted_at IS NULL"
-    )
-    .fetch_all(&state.db.pool)
-    .await?;
-
-    for price in &prices {
-        let (total_count, total_cap) = stock_by_type.get(&price.fish_type_id).copied().unwrap_or((0, 0));
-        let stock_pct = if total_cap > 0 {
-            (total_count as f64 / total_cap as f64) * 100.0
-        } else {
-            50.0
-        };
-
-        // Days since price was set
-        let days_since = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&price.effective_from) {
-            let dt_utc = dt.with_timezone(&chrono::Utc);
-            (now - dt_utc).num_days() as f64
-        } else {
-            0.0
-        };
-
-        // Popularity
-        let fish_sales: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sale_item WHERE fish_type_id = ?1 AND updated_at >= ?2"
-        )
-        .bind(&price.fish_type_id)
-        .bind(&week_ago)
-        .fetch_one(&state.db.pool)
-        .await
-        .unwrap_or(0);
-        let popularity_pct = (fish_sales as f64 / total_items_sold as f64) * 100.0;
-
-        // Seasonal demand: approximate by month
-        let month = now.month();
-        let seasonal_demand_pct = match month {
-            12 | 1 | 2 => 70.0,  // alta demanda dic-feb (navidad, verano)
-            3 | 4 => 50.0,
-            5 | 6 | 7 => 40.0,   // baja
-            8 | 9 => 55.0,
-            10 | 11 => 60.0,     // repunte
-            _ => 50.0,
-        };
-
-        let input = FuzzyInput {
-            stock_pct,
-            hour,
-            popularity_pct,
-            customer_visits_pct: 0.0,
-            hourly_demand_pct,
-            days_since_price_change: days_since.min(30.0),
-            seasonal_demand_pct,
-        };
-
-        let (factor, reasons) = compute_price_factor(&engine, &input);
-        let base_price = price.price_per_kg;
-        let suggested_price = base_price * factor;
-
-        results.push(SuggestedPrice {
-            fish_type_id: price.fish_type_id.clone(),
-            fish_type_name: price.fish_type_name.clone(),
-            base_price,
-            suggested_price,
-            factor,
-            reasons,
-        });
-    }
-
-    Ok(Json(results))
-}
-
-pub async fn push_sync<T: serde::Serialize>(state: &AppState, entity_type: &str, data: &T) {
-    let now = chrono::Utc::now();
-    let payload = match serde_json::to_value(data) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-
-    sqlx::query(
-        "INSERT INTO pending_sync (id, entity_type, entity_id, branch_id, op_counter, payload, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
-    )
-    .bind(ulid::Ulid::new().to_string())
-    .bind(entity_type)
-    .bind(&id)
-    .bind(&state.config.branch_id)
-    .bind(now.timestamp_millis())
-    .bind(payload.to_string())
-    .bind(now)
-    .execute(&state.db.pool)
-    .await
-    .ok();
-}

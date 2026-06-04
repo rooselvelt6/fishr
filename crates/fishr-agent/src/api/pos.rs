@@ -554,11 +554,11 @@ pub async fn confirm_sale(
     .execute(&state.db.pool)
     .await?;
 
-    crate::api::inventory::push_sync(&state, "Sale", &sale).await;
+    crate::sync::push_sync(&state, "Sale", &sale).await;
     for item in &sale_items {
-        crate::api::inventory::push_sync(&state, "SaleItem", item).await;
+        crate::sync::push_sync(&state, "SaleItem", item).await;
     }
-    crate::api::inventory::push_sync(&state, "Invoice", &invoice).await;
+    crate::sync::push_sync(&state, "Invoice", &invoice).await;
 
     Ok(Json(serde_json::json!({
         "sale_id": sale.id,

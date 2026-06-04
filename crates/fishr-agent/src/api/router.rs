@@ -10,6 +10,7 @@ use crate::state::AppState;
 use crate::api::analytics;
 use crate::api::auth;
 use crate::api::inventory;
+use crate::api::pricing;
 use crate::api::planner;
 use crate::api::pos;
 use crate::api::customers;
@@ -68,7 +69,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/fish/{id}", delete(inventory::remove_fish))
         .route("/api/market-prices", get(inventory::list_market_prices))
         .route("/api/market-prices", post(inventory::set_market_price))
-        .route("/api/pricing/suggested", get(inventory::suggested_prices))
+        .route("/api/pricing/suggested", get(pricing::suggested_prices))
         .route("/api/pos/calculate", post(pos::calculate_sale))
         .route("/api/pos/suggestions", post(pos::sale_suggestions))
         .route("/api/pos/confirm", post(pos::confirm_sale))

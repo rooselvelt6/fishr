@@ -29,37 +29,28 @@ impl SyncError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SyncConfig {
-    pub central_url: String,
-    pub branch_id: String,
-    pub sync_interval_secs: u64,
-    pub max_batch_size: usize,
-    pub retry_delay_secs: u64,
-    pub max_retries: i32,
-}
+pub use fishr_core::sync::SyncConfig;
 
-impl SyncConfig {
-    pub fn from_env() -> Self {
-        Self {
-            central_url: std::env::var("CENTRAL_URL").unwrap_or_default(),
-            branch_id: std::env::var("BRANCH_ID").unwrap_or_default(),
-            sync_interval_secs: std::env::var("SYNC_INTERVAL")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(300),
-            max_batch_size: std::env::var("SYNC_BATCH_SIZE")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(100),
-            retry_delay_secs: std::env::var("SYNC_RETRY_DELAY")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(60),
-            max_retries: std::env::var("SYNC_MAX_RETRIES")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(10),
-        }
-    }
+pub async fn push_sync<T: serde::Serialize>(state: &crate::state::AppState, entity_type: &str, data: &T) {
+    let now = chrono::Utc::now();
+    let payload = match serde_json::to_value(data) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    sqlx::query(
+        "INSERT INTO pending_sync (id, entity_type, entity_id, branch_id, op_counter, payload, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+    )
+    .bind(ulid::Ulid::new().to_string())
+    .bind(entity_type)
+    .bind(&id)
+    .bind(&state.config.branch_id)
+    .bind(now.timestamp_millis())
+    .bind(payload.to_string())
+    .bind(now)
+    .execute(&state.db.pool)
+    .await
+    .ok();
 }

@@ -68,7 +68,7 @@ pub async fn create_supplier(
     .execute(&state.db.pool)
     .await?;
 
-    crate::api::inventory::push_sync(&state, "Supplier", &s).await;
+    crate::sync::push_sync(&state, "Supplier", &s).await;
     Ok(Json(s))
 }
 
@@ -124,7 +124,7 @@ pub async fn update_supplier(
     .await?;
 
     let s = row.into_model();
-    crate::api::inventory::push_sync(&state, "Supplier", &s).await;
+    crate::sync::push_sync(&state, "Supplier", &s).await;
     Ok(Json(s))
 }
 
@@ -286,7 +286,7 @@ pub async fn create_delivery(
             .execute(&state.db.pool)
             .await?;
 
-            crate::api::inventory::push_sync(&state, "FishItem", &fish).await;
+            crate::sync::push_sync(&state, "FishItem", &fish).await;
             fish_created += 1;
         }
 
@@ -322,9 +322,9 @@ pub async fn create_delivery(
     .execute(&state.db.pool)
     .await?;
 
-    crate::api::inventory::push_sync(&state, "SupplierDelivery", &delivery).await;
+    crate::sync::push_sync(&state, "SupplierDelivery", &delivery).await;
     for item in &delivery_items {
-        crate::api::inventory::push_sync(&state, "SupplierDeliveryItem", item).await;
+        crate::sync::push_sync(&state, "SupplierDeliveryItem", item).await;
     }
 
     Ok(Json(DeliveryResponse {

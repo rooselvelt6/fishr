@@ -5,6 +5,7 @@ pub mod error;
 pub mod inventory;
 pub mod planner;
 pub mod pos;
+pub mod pricing;
 pub mod rate_limit;
 pub mod reports;
 pub mod router;
