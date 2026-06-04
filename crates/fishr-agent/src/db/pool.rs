@@ -24,7 +24,6 @@ impl Database {
             if trimmed.is_empty() {
                 continue;
             }
-            // Strip leading and trailing comments/lines
             let clean: Vec<&str> = trimmed
                 .lines()
                 .filter(|l| !l.trim().is_empty())
@@ -36,6 +35,8 @@ impl Database {
             let stmt_str = clean.join(" ");
             if let Err(e) = self.pool.execute(&*stmt_str).await {
                 let msg = e.to_string();
+                // Legacy: catch duplicate column on ALTER TABLE for migration 005
+                // during first upgrade to versioned migrations
                 if msg.contains("duplicate column") {
                     tracing::warn!("{} ALTER skipped (already applied): {}", label, msg);
                 } else {
@@ -46,12 +47,56 @@ impl Database {
         Ok(())
     }
 
+    async fn migration_applied(&self, version: &str) -> anyhow::Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _migrations WHERE version = ?1"
+        )
+        .bind(version)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
+    }
+
+    async fn mark_migration(&self, version: &str) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO _migrations (version, name, applied_at) VALUES (?1, ?2, ?3)"
+        )
+        .bind(version)
+        .bind(version)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn run_migrations(&self) -> anyhow::Result<()> {
-        self.exec_multi("001_init", include_str!("migrations/001_init.sql")).await?;
-        self.exec_multi("002_seed", include_str!("migrations/002_seed.sql")).await?;
-        self.exec_multi("003_supplier", include_str!("migrations/003_supplier.sql")).await?;
-        self.exec_multi("004_auth", include_str!("migrations/004_auth.sql")).await?;
-        self.exec_multi("005_iva_discount", include_str!("migrations/005_iva_discount.sql")).await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _migrations (
+                version TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )"
+        )
+        .execute(&self.pool)
+        .await?;
+
+        let migrations: Vec<(&str, &str)> = vec![
+            ("001", include_str!("migrations/001_init.sql")),
+            ("002", include_str!("migrations/002_seed.sql")),
+            ("003", include_str!("migrations/003_supplier.sql")),
+            ("004", include_str!("migrations/004_auth.sql")),
+            ("005", include_str!("migrations/005_iva_discount.sql")),
+            ("006", include_str!("migrations/006_fish_item_index.sql")),
+        ];
+
+        for (version, sql) in &migrations {
+            if self.migration_applied(version).await? {
+                continue;
+            }
+            self.exec_multi(version, sql).await?;
+            self.mark_migration(version).await?;
+            tracing::info!("Migración {} aplicada", version);
+        }
 
         Ok(())
     }
