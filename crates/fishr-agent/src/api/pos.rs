@@ -812,7 +812,34 @@ impl PaymentMethodRow {
             description: self.description,
             is_active: self.is_active,
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
+            synced_at: self.synced_at.and_then(|s| s.parse().ok()),
+            deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
+        }
+    }
+}
+
+impl PreparationRow {
+    fn into_model(self) -> Preparation {
+        Preparation {
+            id: self.id,
+            branch_id: self.branch_id,
+            name: self.name,
+            description: self.description,
+            additional_cost: self.additional_cost.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse additional_cost '{}': {}", self.additional_cost, e);
+                Default::default()
+            }),
+            cost_type: if self.cost_type == "Percentage" { fishr_core::models::CostType::Percentage } else { fishr_core::models::CostType::Fixed },
+            is_active: self.is_active,
+            op_counter: self.op_counter,
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }
@@ -832,24 +859,6 @@ struct PreparationRow {
     updated_at: String,
     synced_at: Option<String>,
     deleted_at: Option<String>,
-}
-
-impl PreparationRow {
-    fn into_model(self) -> Preparation {
-        Preparation {
-            id: self.id,
-            branch_id: self.branch_id,
-            name: self.name,
-            description: self.description,
-            additional_cost: self.additional_cost.parse().unwrap_or_default(),
-            cost_type: if self.cost_type == "Percentage" { fishr_core::models::CostType::Percentage } else { fishr_core::models::CostType::Fixed },
-            is_active: self.is_active,
-            op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
-            synced_at: self.synced_at.and_then(|s| s.parse().ok()),
-            deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
-        }
-    }
 }
 
 fn optimize_prep_sequence(items: &[CalculatedItem]) -> Option<Vec<String>> {

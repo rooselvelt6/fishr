@@ -24,6 +24,18 @@ pub enum FishCategory {
     Other,
 }
 
+impl FishCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FishCategory::White => "White",
+            FishCategory::Blue => "Blue",
+            FishCategory::Shellfish => "Shellfish",
+            FishCategory::Crustacean => "Crustacean",
+            FishCategory::Other => "Other",
+        }
+    }
+}
+
 impl FishType {
     pub fn new(name: String, species: String, category: FishCategory, description: String) -> Self {
         Self {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use chrono::Utc;
 use crate::state::AppState;
-use crate::sync::SyncConfig;
+use crate::sync::{SyncConfig, SyncError};
 
 pub struct SyncAgent {
     state: Arc<AppState>,
@@ -19,8 +19,7 @@ impl SyncAgent {
         Self { state, config, client }
     }
 
-    pub async fn sync_once(&self) -> Result<(), String> {
-        // Get pending items
+    pub async fn sync_once(&self) -> Result<(), SyncError> {
         let pending = sqlx::query_as::<_, PendingRow>(
             "SELECT id, entity_type, entity_id, branch_id, op_counter, payload, created_at, synced_at, retry_count
              FROM pending_sync WHERE synced_at IS NULL AND retry_count < ?1
@@ -29,8 +28,7 @@ impl SyncAgent {
         .bind(self.config.max_retries)
         .bind(self.config.max_batch_size as i32)
         .fetch_all(&self.state.db.pool)
-        .await
-        .map_err(|e| format!("Error fetching pending: {}", e))?;
+        .await?;
 
         if pending.is_empty() {
             return Ok(());
@@ -85,7 +83,6 @@ impl SyncAgent {
                     let now = Utc::now();
                     let ids: Vec<&str> = pending.iter().map(|p| p.id.as_str()).collect();
 
-                    // Mark as synced
                     for id in &ids {
                         sqlx::query("UPDATE pending_sync SET synced_at=?1 WHERE id=?2")
                             .bind(now)
@@ -97,7 +94,6 @@ impl SyncAgent {
 
                     tracing::info!("Synced {} items successfully", pending.len());
 
-                    // Process server updates if any
                     if let Ok(sync_resp) = response.json::<fishr_core::sync::SyncResponse>().await {
                         if !sync_resp.server_updates.is_empty() {
                             tracing::info!("Received {} updates from server", sync_resp.server_updates.len());
@@ -106,14 +102,14 @@ impl SyncAgent {
 
                     Ok(())
                 } else {
-                    let status = response.status();
+                    let status = response.status().as_u16();
                     tracing::warn!("Sync failed with status: {}", status);
-                    Err(format!("HTTP {}", status))
+                    Err(SyncError::Http(status))
                 }
             }
             Err(e) => {
                 tracing::warn!("Sync connection failed: {} (offline)", e);
-                Err(format!("Connection error: {}", e))
+                Err(SyncError::Network(e.to_string()))
             }
         }
     }
@@ -130,11 +126,10 @@ impl SyncAgent {
             match self.sync_once().await {
                 Ok(()) => {}
                 Err(e) => {
-                    if e.starts_with("Connection") {
+                    if e.is_connection() {
                         tracing::debug!("Offline, will retry later");
                     } else {
                         tracing::error!("Sync error: {}", e);
-                        // Reduce interval for retry
                         tokio::time::sleep(std::time::Duration::from_secs(
                             self.config.retry_delay_secs
                         )).await;
@@ -164,7 +159,6 @@ pub async fn run_sync_loop(state: Arc<AppState>, config: SyncConfig) {
     agent.run_loop().await;
 }
 
-// API handlers
 use axum::{Json, extract::State};
 
 pub async fn api_sync_status(
@@ -201,6 +195,6 @@ pub async fn api_trigger_sync(
 
     match agent.sync_once().await {
         Ok(()) => Json(serde_json::json!({ "success": true })),
-        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e.to_string() })),
     }
 }

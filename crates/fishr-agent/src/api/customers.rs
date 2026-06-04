@@ -167,7 +167,10 @@ impl CustomerRow {
             address: self.address,
             points: self.points,
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }

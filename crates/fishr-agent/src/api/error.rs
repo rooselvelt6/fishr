@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use axum::Json;
 use axum::response::{IntoResponse, Response};
+use fishr_core::error::CoreError;
 
 pub type ApiResult<T> = Result<Json<T>, ApiError>;
 
@@ -22,7 +23,6 @@ impl ApiError {
         Self { status: StatusCode::INTERNAL_SERVER_ERROR, message: msg.into() }
     }
 
-    #[allow(dead_code)]
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self { status: StatusCode::CONFLICT, message: msg.into() }
     }
@@ -50,6 +50,19 @@ impl From<sqlx::Error> for ApiError {
 impl From<serde_json::Error> for ApiError {
     fn from(e: serde_json::Error) -> Self {
         Self::internal(format!("Error de serialización: {}", e))
+    }
+}
+
+impl From<CoreError> for ApiError {
+    fn from(e: CoreError) -> Self {
+        match e {
+            CoreError::NotFound(msg) => Self::not_found(msg),
+            CoreError::Validation(msg) => Self::bad_request(msg),
+            CoreError::Serde(e) => Self::internal(format!("Error de serialización: {}", e)),
+            CoreError::SyncConflict(msg) => Self::conflict(msg),
+            CoreError::InvalidUlid(msg) => Self::bad_request(msg),
+            CoreError::DecimalError(msg) => Self::internal(format!("Error de conversión: {}", msg)),
+        }
     }
 }
 

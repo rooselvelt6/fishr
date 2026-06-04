@@ -413,7 +413,10 @@ impl SupplierRow {
             is_self: self.is_self,
             is_active: self.is_active,
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }
@@ -445,13 +448,22 @@ impl SupplierDeliveryRow {
             branch_id: self.branch_id,
             supplier_id: self.supplier_id,
             supplier_name: self.supplier_name,
-            delivery_date: self.delivery_date.parse().unwrap_or_default(),
+            delivery_date: self.delivery_date.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse delivery_date '{}': {}", self.delivery_date, e);
+                Default::default()
+            }),
             notes: self.notes,
             transport_plate: self.transport_plate,
             transport_driver: self.transport_driver,
-            total_cost: self.total_cost.parse().unwrap_or_default(),
+            total_cost: self.total_cost.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse total_cost '{}': {}", self.total_cost, e);
+                Default::default()
+            }),
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }
@@ -487,9 +499,15 @@ impl SupplierDeliveryItemRow {
             fish_type_name: self.fish_type_name,
             quantity: self.quantity,
             weight_grams: self.weight_grams,
-            unit_cost: self.unit_cost.parse().unwrap_or_default(),
+            unit_cost: self.unit_cost.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse unit_cost '{}': {}", self.unit_cost, e);
+                Default::default()
+            }),
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }

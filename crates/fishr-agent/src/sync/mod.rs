@@ -1,6 +1,35 @@
 pub mod agent;
 
 #[derive(Debug, Clone)]
+pub enum SyncError {
+    Db(String),
+    Network(String),
+    Http(u16),
+}
+
+impl std::fmt::Display for SyncError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SyncError::Db(msg) => write!(f, "sync DB error: {}", msg),
+            SyncError::Network(msg) => write!(f, "sync network error: {}", msg),
+            SyncError::Http(status) => write!(f, "sync HTTP error: {}", status),
+        }
+    }
+}
+
+impl From<sqlx::Error> for SyncError {
+    fn from(e: sqlx::Error) -> Self {
+        SyncError::Db(e.to_string())
+    }
+}
+
+impl SyncError {
+    pub fn is_connection(&self) -> bool {
+        matches!(self, SyncError::Network(_))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SyncConfig {
     pub central_url: String,
     pub branch_id: String,

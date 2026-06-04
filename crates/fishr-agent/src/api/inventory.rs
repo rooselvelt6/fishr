@@ -342,7 +342,7 @@ pub async fn update_fish_type(
 }
 
 fn category_to_string(cat: &FishCategory) -> String {
-    serde_json::to_string(cat).unwrap_or_default().trim_matches('"').to_string()
+    cat.as_str().to_string()
 }
 
 pub async fn list_market_prices(
@@ -445,10 +445,23 @@ impl FishTypeRow {
             id: self.id,
             name: self.name,
             species: self.species,
-            category: serde_json::from_str(&format!("\"{}\"", self.category)).unwrap_or_default(),
+            category: match self.category.as_str() {
+                "White" => FishCategory::White,
+                "Blue" => FishCategory::Blue,
+                "Shellfish" => FishCategory::Shellfish,
+                "Crustacean" => FishCategory::Crustacean,
+                "Other" => FishCategory::Other,
+                _ => {
+                    tracing::warn!("unknown FishCategory '{}', defaulting to White", self.category);
+                    FishCategory::White
+                }
+            },
             description: self.description,
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }
@@ -485,7 +498,10 @@ impl ContainerRow {
             location: self.location,
             is_active: self.is_active,
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }
@@ -523,13 +539,19 @@ impl FishItemRow {
             fish_type_id: self.fish_type_id,
             fish_type_name: self.fish_type_name,
             weight_grams: self.weight_grams,
-            added_at: self.added_at.parse().unwrap_or_default(),
+            added_at: self.added_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse added_at '{}': {}", self.added_at, e);
+                Default::default()
+            }),
             sold_at: self.sold_at.and_then(|s| s.parse().ok()),
             sold_in_sale_id: self.sold_in_sale_id,
             supplier_delivery_item_id: self.supplier_delivery_item_id,
             cost_price: self.cost_price.and_then(|s| s.parse().ok()),
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }
@@ -559,12 +581,24 @@ impl MarketPriceRow {
             branch_id: self.branch_id,
             fish_type_id: self.fish_type_id,
             fish_type_name: self.fish_type_name,
-            price_per_kg: rust_decimal::Decimal::from_f64_retain(self.price_per_kg).unwrap_or_default(),
-            cost_price: rust_decimal::Decimal::from_f64_retain(self.cost_price).unwrap_or_default(),
-            effective_from: self.effective_from.parse().unwrap_or_default(),
+            price_per_kg: rust_decimal::Decimal::from_f64_retain(self.price_per_kg).unwrap_or_else(|| {
+                tracing::warn!("failed to convert price_per_kg {} to Decimal", self.price_per_kg);
+                Default::default()
+            }),
+            cost_price: rust_decimal::Decimal::from_f64_retain(self.cost_price).unwrap_or_else(|| {
+                tracing::warn!("failed to convert cost_price {} to Decimal", self.cost_price);
+                Default::default()
+            }),
+            effective_from: self.effective_from.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse effective_from '{}': {}", self.effective_from, e);
+                Default::default()
+            }),
             effective_to: self.effective_to.and_then(|s| s.parse().ok()),
             op_counter: self.op_counter,
-            updated_at: self.updated_at.parse().unwrap_or_default(),
+            updated_at: self.updated_at.parse().unwrap_or_else(|e| {
+                tracing::warn!("failed to parse updated_at '{}': {}", self.updated_at, e);
+                Default::default()
+            }),
             synced_at: self.synced_at.and_then(|s| s.parse().ok()),
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }
