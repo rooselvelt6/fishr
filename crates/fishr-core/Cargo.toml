@@ -10,3 +10,4 @@ chrono.workspace = true
 ulid.workspace = true
 rust_decimal.workspace = true
 thiserror.workspace = true
+rand.workspace = true

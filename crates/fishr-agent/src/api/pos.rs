@@ -3,7 +3,12 @@ use axum::Json;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use chrono::{Timelike, Datelike};
 use fishr_core::models::*;
+use fishr_core::fuzzy::sets::*;
+use fishr_core::fuzzy::suggestions::*;
+use fishr_core::aco::graph::{PrepGraph, PrepNode};
+use fishr_core::aco::engine::{AcoConfig, AcoSolver};
 use crate::api::error::{ApiResult, ApiError, validate_not_empty, validate_weight};
 use crate::state::AppState;
 
@@ -16,6 +21,7 @@ pub struct CalculatedSale {
     pub tax_amount: f64,
     pub iva_rate: f64,
     pub total: f64,
+    pub preparation_sequence: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -29,6 +35,7 @@ pub struct CalculatedItem {
     pub preparation_name: Option<String>,
     pub preparation_fee: f64,
     pub subtotal: f64,
+    pub preparation_order: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -36,6 +43,27 @@ pub struct CalculateRequest {
     pub items: Vec<CalculateItemRequest>,
     pub iva_rate: Option<f64>,
     pub discount: Option<f64>,
+}
+
+#[derive(Deserialize)]
+pub struct SuggestionsRequest {
+    pub items: Vec<CalculateItemRequest>,
+    pub customer_id: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SuggestionsResponse {
+    pub suggestions: Vec<SuggestionOutput>,
+}
+
+#[derive(Serialize)]
+pub struct SuggestionOutput {
+    pub r#type: String,
+    pub message: String,
+    pub reason: String,
+    pub confidence: f64,
+    pub preparation_id: Option<String>,
+    pub max_discount_pct: Option<f64>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -94,10 +122,101 @@ pub async fn list_preparations(
     Ok(Json(rows.into_iter().map(|r| r.into_model()).collect()))
 }
 
+async fn precompute_price_factors(state: &AppState) -> anyhow::Result<std::collections::HashMap<String, f64>> {
+    let now = chrono::Utc::now();
+    let hour = now.hour() as f64;
+
+    // Stock per fish type: aggregate from containers
+    let stock_rows = sqlx::query_as::<_, StockByType>(
+        "SELECT fish_type_id, SUM(current_count) as total_count, SUM(capacity) as total_capacity
+         FROM container WHERE deleted_at IS NULL AND is_active = 1
+         GROUP BY fish_type_id"
+    )
+    .fetch_all(&state.db.pool)
+    .await?;
+
+    let mut stock_by_type: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
+    for r in &stock_rows {
+        stock_by_type.insert(r.fish_type_id.clone(), (r.total_count, r.total_capacity));
+    }
+
+    let today_start = now.format("%Y-%m-%dT00:00:00").to_string();
+    let today_sales: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sale WHERE created_at >= ?1"
+    )
+    .bind(&today_start)
+    .fetch_one(&state.db.pool)
+    .await
+    .unwrap_or(0);
+    let hourly_demand_pct = (today_sales as f64 / 24.0).min(100.0);
+
+    let week_ago = (now - chrono::Duration::days(7)).format("%Y-%m-%dT%H:%M:%S").to_string();
+    let total_items_sold: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sale_item WHERE updated_at >= ?1"
+    )
+    .bind(&week_ago)
+    .fetch_one(&state.db.pool)
+    .await
+    .unwrap_or(1).max(1);
+
+    let engine = build_pricing_engine();
+    let month = now.month();
+    let mut factors = std::collections::HashMap::new();
+
+    let prices = sqlx::query_as::<_, MarketPriceRow>(
+        "SELECT id, branch_id, fish_type_id, fish_type_name, price_per_kg, cost_price,
+                effective_from, effective_to, op_counter, updated_at, synced_at, deleted_at
+         FROM market_price WHERE effective_to IS NULL AND deleted_at IS NULL"
+    )
+    .fetch_all(&state.db.pool)
+    .await?;
+
+    for price in &prices {
+        let (total_count, total_cap) = stock_by_type.get(&price.fish_type_id).copied().unwrap_or((0, 0));
+        let stock_pct = if total_cap > 0 { (total_count as f64 / total_cap as f64) * 100.0 } else { 50.0 };
+
+        let days_since = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&price.effective_from) {
+            let dt_utc = dt.with_timezone(&chrono::Utc);
+            (now - dt_utc).num_days() as f64
+        } else { 0.0 };
+
+        let fish_sales: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sale_item WHERE fish_type_id = ?1 AND updated_at >= ?2"
+        )
+        .bind(&price.fish_type_id)
+        .bind(&week_ago)
+        .fetch_one(&state.db.pool)
+        .await
+        .unwrap_or(0);
+        let popularity_pct = (fish_sales as f64 / total_items_sold as f64) * 100.0;
+
+        let seasonal_demand_pct = match month {
+            12 | 1 | 2 => 70.0,
+            3 | 4 => 50.0,
+            5 | 6 | 7 => 40.0,
+            8 | 9 => 55.0,
+            10 | 11 => 60.0,
+            _ => 50.0,
+        };
+
+        let input = FuzzyInput {
+            stock_pct, hour,
+            popularity_pct, customer_visits_pct: 0.0, hourly_demand_pct,
+            days_since_price_change: days_since.min(30.0),
+            seasonal_demand_pct,
+        };
+        let (factor, _) = compute_price_factor(&engine, &input);
+        factors.insert(price.fish_type_id.clone(), factor);
+    }
+
+    Ok(factors)
+}
+
 pub async fn calculate_sale(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CalculateRequest>,
 ) -> ApiResult<CalculatedSale> {
+    let price_factors = precompute_price_factors(&state).await.unwrap_or_default();
     let mut items = Vec::new();
     let mut subtotal_total = 0.0f64;
     let mut prep_total = 0.0f64;
@@ -122,9 +241,13 @@ pub async fn calculate_sale(
         .fetch_optional(&state.db.pool)
         .await?;
 
-        let price_per_kg = price.as_ref()
+        let base_price = price.as_ref()
             .map(|p| p.price_per_kg)
             .ok_or_else(|| ApiError::bad_request(format!("No hay precio de mercado para {}", fish.fish_type_name)))?;
+
+        // Apply dynamic pricing factor
+        let dyn_factor = price_factors.get(&fish.fish_type_id).copied().unwrap_or(1.0);
+        let price_per_kg = base_price * dyn_factor;
 
         let (_prep_row, prep_name, prep_fee) = if let Some(ref pid) = item.preparation_id {
             let prep = sqlx::query_as::<_, PreparationRow>(
@@ -168,6 +291,7 @@ pub async fn calculate_sale(
             preparation_name: prep_name,
             preparation_fee: prep_fee,
             subtotal,
+            preparation_order: None,
         });
     }
 
@@ -178,6 +302,10 @@ pub async fn calculate_sale(
     let tax_amount = taxable_base * iva_rate / 100.0;
     let total = taxable_base + tax_amount;
 
+    // ACO-based preparation sequence optimization
+    let preparation_sequence = optimize_prep_sequence(&items);
+    let items = apply_prep_sequence(items, &preparation_sequence);
+
     Ok(Json(CalculatedSale {
         total,
         subtotal: subtotal_total,
@@ -186,6 +314,7 @@ pub async fn calculate_sale(
         tax_amount,
         iva_rate,
         items,
+        preparation_sequence,
     }))
 }
 
@@ -199,6 +328,7 @@ pub async fn confirm_sale(
     }
 
     let now = chrono::Utc::now();
+    let price_factors = precompute_price_factors(&state).await.unwrap_or_default();
 
     let pm = sqlx::query_as::<_, PaymentMethodRow>(
         "SELECT id, branch_id, name, description, is_active, op_counter, updated_at, synced_at, deleted_at
@@ -246,12 +376,15 @@ pub async fn confirm_sale(
         .fetch_optional(&state.db.pool)
         .await?;
 
-        let price_per_kg = market_price
+        let base_price = market_price
             .as_ref()
             .map(|p| p.price_per_kg)
             .ok_or_else(|| ApiError::bad_request(format!("No hay precio de mercado para {}", fish.fish_type_name)))?;
 
-        let pkg = rust_decimal::Decimal::from_f64_retain(price_per_kg)
+        let dyn_factor = price_factors.get(&fish.fish_type_id).copied().unwrap_or(1.0);
+        let adjusted_price = base_price * dyn_factor;
+
+        let pkg = rust_decimal::Decimal::from_f64_retain(adjusted_price)
             .ok_or_else(|| ApiError::bad_request("precio por kg inválido"))?;
         let pf = rust_decimal::Decimal::from_f64_retain(item.preparation_fee)
             .unwrap_or_default();
@@ -436,7 +569,191 @@ pub async fn confirm_sale(
     })))
 }
 
+pub async fn sale_suggestions(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SuggestionsRequest>,
+) -> ApiResult<SuggestionsResponse> {
+    let now = chrono::Utc::now();
+    let hour = now.hour() as f64;
+
+    // Get overall stock percentage across all containers
+    let stock_info = sqlx::query_as::<_, StockInfo>(
+        "SELECT COALESCE(SUM(current_count), 0) as total_count, COALESCE(SUM(capacity), 0) as total_capacity
+         FROM container WHERE deleted_at IS NULL"
+    )
+    .fetch_one(&state.db.pool)
+    .await?;
+
+    let stock_pct = if stock_info.total_capacity > 0 {
+        (stock_info.total_count as f64 / stock_info.total_capacity as f64) * 100.0
+    } else {
+        50.0
+    };
+
+    // Get today's total sales count for demand calculation
+    let today_start = now.format("%Y-%m-%dT00:00:00").to_string();
+    let today_sales: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sale WHERE created_at >= ?1"
+    )
+    .bind(&today_start)
+    .fetch_one(&state.db.pool)
+    .await
+    .unwrap_or(0);
+
+    let hourly_demand_pct = (today_sales as f64 / 24.0).min(100.0);
+
+    // Get popularity: total sales per fish type (last 7 days)
+    let week_ago = (now - chrono::Duration::days(7)).format("%Y-%m-%dT%H:%M:%S").to_string();
+    let total_items_sold: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sale_item WHERE updated_at >= ?1"
+    )
+    .bind(&week_ago)
+    .fetch_one(&state.db.pool)
+    .await
+    .unwrap_or(1).max(1);
+
+    let engine = build_pos_engine();
+
+    // Get customer loyalty if provided
+    let customer_visits_pct = if let Some(cid) = &req.customer_id {
+        let visits: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sale WHERE customer_id = ?1"
+        )
+        .bind(cid)
+        .fetch_one(&state.db.pool)
+        .await
+        .unwrap_or(0);
+        (visits as f64 / 50.0).min(100.0) * 100.0
+    } else {
+        0.0
+    };
+
+    let mut all_suggestions = Vec::new();
+
+    // Get all preparations for matching
+    let prep_rows = sqlx::query_as::<_, PreparationRow>(
+        "SELECT id, branch_id, name, description, additional_cost, cost_type, is_active,
+                op_counter, updated_at, synced_at, deleted_at
+         FROM preparation WHERE is_active = 1 AND deleted_at IS NULL"
+    )
+    .fetch_all(&state.db.pool)
+    .await?;
+
+    let preparations: Vec<(String, String)> = prep_rows.iter()
+        .map(|p| (p.id.clone(), p.name.clone()))
+        .collect();
+    let prep_refs: Vec<(&str, &str)> = preparations.iter()
+        .map(|(id, name)| (id.as_str(), name.as_str()))
+        .collect();
+
+    for item in &req.items {
+        let fish = sqlx::query_as::<_, FishItemRow>(
+            "SELECT id, branch_id, container_id, container_label, fish_type_id, fish_type_name,
+                    weight_grams, added_at, sold_at, sold_in_sale_id,
+                    op_counter, updated_at, synced_at, deleted_at
+             FROM fish_item WHERE id = ?1"
+        )
+        .bind(&item.fish_item_id)
+        .fetch_optional(&state.db.pool)
+        .await?;
+
+        let (fish_type_id, fish_type_name, category) = match fish {
+            Some(ref f) => {
+                let cat: Option<String> = sqlx::query_scalar(
+                    "SELECT category FROM fish_type WHERE id = ?1"
+                )
+                .bind(&f.fish_type_id)
+                .fetch_optional(&state.db.pool)
+                .await
+                .unwrap_or(None);
+                (f.fish_type_id.clone(), f.fish_type_name.clone(), cat.unwrap_or_default())
+            }
+            None => continue,
+        };
+
+        // Fish type popularity
+        let fish_sales: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sale_item WHERE fish_type_id = ?1 AND updated_at >= ?2"
+        )
+        .bind(&fish_type_id)
+        .bind(&week_ago)
+        .fetch_one(&state.db.pool)
+        .await
+        .unwrap_or(0);
+
+        let popularity_pct = (fish_sales as f64 / total_items_sold as f64) * 100.0;
+
+        let input = FuzzyInput::new_pos(
+            stock_pct,
+            hour,
+            popularity_pct,
+            customer_visits_pct,
+            hourly_demand_pct,
+        );
+
+        let raw = engine.evaluate(&input);
+        let matched = match_preparation_suggestion(&raw, &fish_type_name, &category, &prep_refs);
+
+        for s in matched {
+            let (stype, message, reason, prep_id, discount_pct) = match &s.suggestion_type {
+                SuggestionType::SuggestDiscount { max_discount_pct, reason } => {
+                    ("discount", format!("Descuento hasta {}%", max_discount_pct), reason.clone(), None, Some(*max_discount_pct))
+                }
+                SuggestionType::SuggestPromotion { message, reason } => {
+                    ("promotion", message.clone(), reason.clone(), None, None)
+                }
+                SuggestionType::SuggestPreparation { preparation_id, reason } => {
+                    ("preparation", "¿Agregar preparación?".into(), reason.clone(), Some(preparation_id.clone()), None)
+                }
+                SuggestionType::SuggestUpsell { message, reason } => {
+                    ("upsell", message.clone(), reason.clone(), None, None)
+                }
+                SuggestionType::PriceFactor { factor, reason } => {
+                    ("price_factor", format!("Factor sugerido: {:.0}%", factor * 100.0), reason.clone(), None, None)
+                }
+            };
+            all_suggestions.push(SuggestionOutput {
+                r#type: stype.to_string(),
+                message,
+                reason,
+                confidence: s.confidence,
+                preparation_id: prep_id,
+                max_discount_pct: discount_pct,
+            });
+        }
+    }
+
+    // Deduplicate by type+message, keep highest confidence
+    all_suggestions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    let mut seen = std::collections::HashSet::new();
+    all_suggestions.retain(|s| {
+        seen.insert((s.r#type.clone(), s.message.clone()))
+    });
+
+    // Keep top 5
+    all_suggestions.truncate(5);
+
+    Ok(Json(SuggestionsResponse {
+        suggestions: all_suggestions,
+    }))
+}
+
 // Row types
+#[allow(dead_code)]
+#[derive(sqlx::FromRow)]
+struct StockByType {
+    fish_type_id: String,
+    total_count: i64,
+    total_capacity: i64,
+}
+
+#[allow(dead_code)]
+#[derive(sqlx::FromRow)]
+struct StockInfo {
+    total_count: i64,
+    total_capacity: i64,
+}
+
 #[allow(dead_code)]
 #[derive(sqlx::FromRow)]
 struct FishItemRow {
@@ -533,4 +850,54 @@ impl PreparationRow {
             deleted_at: self.deleted_at.and_then(|s| s.parse().ok()),
         }
     }
+}
+
+fn optimize_prep_sequence(items: &[CalculatedItem]) -> Option<Vec<String>> {
+    let prep_items: Vec<&CalculatedItem> = items.iter()
+        .filter(|i| i.preparation_name.is_some())
+        .collect();
+
+    if prep_items.len() < 2 {
+        return None;
+    }
+
+    let nodes: Vec<PrepNode> = prep_items.iter().enumerate().map(|(idx, item)| {
+        PrepNode {
+            index: idx,
+            fish_item_id: item.fish_item_id.clone(),
+            fish_type_name: item.fish_type_name.clone(),
+            preparation_id: item.preparation_name.clone().unwrap_or_default(),
+            preparation_name: item.preparation_name.clone().unwrap_or_default(),
+            category: String::new(),
+        }
+    }).collect();
+
+    let graph = PrepGraph::new(nodes.clone());
+    let config = AcoConfig::default();
+    let solver = AcoSolver::new(config);
+    let result = solver.solve(&graph);
+
+    let sequence: Vec<String> = result.best_path.order.iter()
+        .map(|&i| nodes[i].fish_item_id.clone())
+        .collect();
+
+    Some(sequence)
+}
+
+fn apply_prep_sequence(mut items: Vec<CalculatedItem>, sequence: &Option<Vec<String>>) -> Vec<CalculatedItem> {
+    let seq = match sequence {
+        Some(s) => s,
+        None => return items,
+    };
+
+    let mut order_map: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (pos, id) in seq.iter().enumerate() {
+        order_map.insert(id.as_str(), pos + 1);
+    }
+
+    for item in &mut items {
+        item.preparation_order = order_map.get(item.fish_item_id.as_str()).copied();
+    }
+
+    items
 }

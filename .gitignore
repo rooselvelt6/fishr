@@ -4,4 +4,7 @@
 *.swo
 __pycache__/
 .DS_Store
+*.db
+*.db-shm
+*.db-wal
 

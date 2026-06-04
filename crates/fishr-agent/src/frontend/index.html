@@ -217,6 +217,15 @@ tr:hover td{background:var(--surface2)}
   .stat-card,.chart-card{break-inside:avoid;border:1px solid #ccc}
 }
 
+.sugg-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:11px;cursor:pointer;transition:.15s;max-width:200px}
+.sugg-card:hover{border-color:var(--primary)}
+.sugg-card .sugg-type{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)}
+.sugg-card .sugg-msg{font-weight:600;margin:2px 0}
+.sugg-card .sugg-reason{font-size:10px;color:var(--text2)}
+.sugg-card.discount{border-left:3px solid var(--warning)}
+.sugg-card.preparation{border-left:3px solid var(--primary)}
+.sugg-card.promotion{border-left:3px solid var(--success)}
+.sugg-card.upsell{border-left:3px solid var(--danger)}
 /* Touch-friendly: bigger tap targets on mobile */
 @media(hover:none) and (pointer:coarse){
   .sidebar-link,.tab,.pos-fish-item,.btn-sm{padding-top:clamp(10px,3vw,12px);padding-bottom:clamp(10px,3vw,12px)}
@@ -306,6 +315,13 @@ tr:hover td{background:var(--surface2)}
             </div>
           </div>
           <div class="pos-fish-grid" id="posFishGrid"></div>
+          <div id="posSuggestions" style="margin-top:12px;display:none">
+            <div class="flex-between mb-8">
+              <span style="font-size:12px;color:var(--text2)"><i class="fas fa-lightbulb"></i> Sugerencias</span>
+              <button class="btn-outline btn-sm" onclick="refreshSuggestions()"><i class="fas fa-sync-alt"></i></button>
+            </div>
+            <div id="posSuggestionCards" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+          </div>
         </div>
         <div class="pos-cart">
           <div class="flex-between"><h3><i class="fas fa-shopping-cart"></i> Carrito</h3><span id="cartCount" style="font-size:12px;color:var(--text2)">0 items</span></div>
@@ -348,11 +364,11 @@ tr:hover td{background:var(--surface2)}
       </div>
       <div id="invTabPrices" class="invTab" style="display:none">
         <div class="flex-between mb-16"><h3>Precios de Mercado</h3><button class="btn-primary btn-sm" onclick="showPriceModal()"><i class="fas fa-plus"></i> Nuevo Precio</button></div>
-        <div style="overflow-x:auto"><table id="priceTable"><thead><tr><th>Especie</th><th>Precio/Kg</th><th>Costo/Kg</th><th>Margen</th><th>Desde</th></tr></thead><tbody></tbody></table></div>
+        <div style="overflow-x:auto"><table id="priceTable"><thead><tr><th>Especie</th><th>Precio/Kg</th><th>Costo/Kg</th><th>Margen</th><th>Desde</th><th>Sugerido</th></tr></thead><tbody></tbody></table></div>
       </div>
       <div id="invTabTypes" class="invTab" style="display:none">
-        <h3 class="mb-16">Catálogo de Especies</h3>
-        <div style="overflow-x:auto"><table id="fishTypeTable"><thead><tr><th>Nombre</th><th>Especie</th><th>Categoría</th></tr></thead><tbody></tbody></table></div>
+        <div class="flex-between mb-16"><h3>Catálogo de Especies</h3><button class="btn-primary btn-sm" onclick="showFishTypeModal()"><i class="fas fa-plus"></i> Nueva Especie</button></div>
+        <div style="overflow-x:auto"><table id="fishTypeTable"><thead><tr><th>Nombre</th><th>Especie</th><th>Categoría</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </div>
 
@@ -367,6 +383,7 @@ tr:hover td{background:var(--surface2)}
       <div class="tabs" id="supTabs">
         <span class="tab active" data-suptab="suppliers">Proveedores</span>
         <span class="tab" data-suptab="deliveries">Recepciones</span>
+        <span class="tab" data-suptab="planner">Planificador</span>
       </div>
       <div id="supTabSuppliers" class="supTab">
         <div class="flex-between mb-16"><h3>Proveedores</h3><button class="btn-primary btn-sm" onclick="showSupplierModal()"><i class="fas fa-plus"></i> Nuevo</button></div>
@@ -375,6 +392,21 @@ tr:hover td{background:var(--surface2)}
       <div id="supTabDeliveries" class="supTab" style="display:none">
         <div class="flex-between mb-16"><h3>Recepciones</h3><button class="btn-primary btn-sm" onclick="showDeliveryModal()"><i class="fas fa-plus"></i> Nueva Recepción</button></div>
         <div style="overflow-x:auto"><table id="deliveryTable"><thead><tr><th>Proveedor</th><th>Fecha</th><th>Total</th><th>Placa</th><th>Notas</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div id="supTabPlanner" class="supTab" style="display:none">
+        <div class="flex-between mb-16">
+          <h3><i class="fas fa-robot"></i> Planificador de Inventario</h3>
+          <button class="btn-primary btn-sm" onclick="runPlanner()"><i class="fas fa-cogs"></i> Generar Plan</button>
+        </div>
+        <div id="plannerStatus" class="text-sm mb-16" style="color:var(--text2)">Presiona "Generar Plan" para obtener sugerencias de compra basadas en ventas históricas.</div>
+        <div style="overflow-x:auto"><table id="plannerTable"><thead><tr><th>Especie</th><th>Stock Actual</th><th>Venta Diaria Prom.</th><th>Sugerido (kg)</th><th>Margen Esp.</th><th>Confianza</th></tr></thead><tbody></tbody></table></div>
+        <div id="plannerSummary" class="mt-16" style="display:none">
+          <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+            <div class="stat-card"><div class="label">Ingreso Esperado</div><div class="value" id="plannerRevenue" style="font-size:18px">Bs. 0</div></div>
+            <div class="stat-card"><div class="label">Costo Esperado</div><div class="value" id="plannerCost" style="font-size:18px">Bs. 0</div></div>
+            <div class="stat-card"><div class="label">Margen Esperado</div><div class="value" id="plannerMargin" style="font-size:18px;color:var(--success)">Bs. 0</div></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -756,6 +788,84 @@ async function confirmSale() {
   } catch(e) { toast('Error: '+e.message, 'error') }
 }
 
+// ===== SUGGESTIONS (Fuzzy Expert System) =====
+async function refreshSuggestions() {
+  const container = document.getElementById('posSuggestions')
+  const cards = document.getElementById('posSuggestionCards')
+  if (!state.posCart.length) {
+    container.style.display = 'none'
+    return
+  }
+  try {
+    const customerInput = document.getElementById('posCustomer').value
+    let customerId = null
+    if (customerInput) {
+      try {
+        const cust = await api('GET', '/api/customers/search?q=' + encodeURIComponent(customerInput))
+        const list = cust.customers || cust
+        if (list.length) customerId = list[0].id
+      } catch {}
+    }
+    const res = await api('POST', '/api/pos/suggestions', {
+      items: state.posCart.map(i => ({ fish_item_id: i.fish_item_id, preparation_id: i.preparation_id || null })),
+      customer_id: customerId
+    })
+    const list = res.suggestions || []
+    if (!list.length) {
+      container.style.display = 'none'
+      return
+    }
+    container.style.display = 'block'
+    cards.innerHTML = list.map(s => {
+      const typeClass = s.type === 'discount' ? 'discount' : s.type === 'preparation' ? 'preparation' : s.type === 'promotion' ? 'promotion' : 'upsell'
+      const icon = s.type === 'discount' ? 'fa-tags' : s.type === 'preparation' ? 'fa-kitchen-set' : s.type === 'promotion' ? 'fa-bullhorn' : 'fa-arrow-up'
+      const pct = (s.confidence * 100).toFixed(0)
+      return `<div class="sugg-card ${typeClass}" onclick="applySuggestion('${s.type}','${s.preparation_id||''}',${s.max_discount_pct||0})" title="${s.reason} (${pct}% confianza)">
+        <div class="sugg-type"><i class="fas ${icon}"></i> ${s.type} · ${pct}%</div>
+        <div class="sugg-msg">${s.message}</div>
+        <div class="sugg-reason">${s.reason}</div>
+      </div>`
+    }).join('')
+  } catch {}
+}
+
+function applySuggestion(type, prepId, maxDiscount) {
+  if (type === 'discount' && maxDiscount > 0) {
+    document.getElementById('posDiscount').value = maxDiscount
+    renderCart()
+    toast(`Descuento sugerido: ${maxDiscount}%`, 'info')
+  }
+  if (type === 'preparation' && prepId) {
+    // Apply preparation to last cart item
+    if (state.posCart.length) {
+      const last = state.posCart[state.posCart.length - 1]
+      last.preparation_id = prepId
+      // Fetch preparation name
+      fetch('/api/preparations').then(r=>r.json()).then(preps => {
+        const list = preps.preparations || preps
+        const p = list.find(x => x.id === prepId)
+        if (p) {
+          last.preparation_name = p.name
+          last.preparation_fee = parseFloat(p.additional_cost) || 0
+          renderCart()
+          toast(`Preparación añadida: ${p.name}`, 'success')
+          refreshSuggestions()
+        }
+      })
+    }
+  }
+  if (type === 'promotion' || type === 'upsell') {
+    toast(`💡 ${document.querySelector('.sugg-card.'+type+' .sugg-msg')?.textContent || 'Sugerencia aplicada'}`, 'info')
+  }
+}
+
+// Auto-refresh suggestions when cart changes
+const origRenderCart = renderCart
+renderCart = function() {
+  origRenderCart()
+  setTimeout(refreshSuggestions, 100)
+}
+
 // ===== INVENTORY =====
 async function loadInventory() {
   try {
@@ -788,17 +898,34 @@ async function loadInventory() {
 
     // Prices
     const ptbody = document.querySelector('#priceTable tbody')
+    // Fetch suggested prices for dynamic pricing display
+    let suggestedMap = {}
+    try {
+      const suggested = await api('GET', '/api/pricing/suggested')
+      ;(suggested||[]).forEach(s => {
+        suggestedMap[s.fish_type_id] = { price: s.suggested_price, factor: s.factor }
+      })
+    } catch {}
     ptbody.innerHTML = priceList.map(p => {
       const price = parseFloat(p.price_per_kg) || 0
       const cost = parseFloat(p.cost_price) || 0
       const margin = price > 0 ? ((price-cost)/price*100).toFixed(0) : '—'
-      return `<tr><td>${p.fish_type_name}</td><td>Bs. ${price.toFixed(2)}</td><td>Bs. ${cost.toFixed(2)}</td><td><span class="badge badge-green">${margin}%</span></td><td class="text-sm">${new Date(p.effective_from).toLocaleDateString('es-VE')}</td></tr>`
+      const sug = suggestedMap[p.fish_type_id]
+      const suggestedHtml = sug ? `<span style="color:${sug.factor < 1 ? 'var(--warning)' : 'var(--success)'}">Bs. ${sug.price.toFixed(2)} <span style="font-size:10px;color:var(--text2)">(${(sug.factor*100).toFixed(0)}%)</span></span>` : '<span style="color:var(--text2)">—</span>'
+      return `<tr><td>${p.fish_type_name}</td><td>Bs. ${price.toFixed(2)}</td><td>Bs. ${cost.toFixed(2)}</td><td><span class="badge badge-green">${margin}%</span></td><td class="text-sm">${new Date(p.effective_from).toLocaleDateString('es-VE')}</td><td>${suggestedHtml}</td></tr>`
     }).join('')
 
     // Types
     const ttbody = document.querySelector('#fishTypeTable tbody')
     const typeList = types.fish_types || types
-    ttbody.innerHTML = (typeList||[]).map(t => `<tr><td>${t.name}</td><td>${t.species||'—'}</td><td><span class="badge badge-blue">${t.category||'—'}</span></td></tr>`).join('')
+    ttbody.innerHTML = (typeList||[]).map(t => `<tr>
+      <td>${t.name}</td>
+      <td>${t.species||'—'}</td>
+      <td><span class="badge badge-blue">${t.category||'—'}</span></td>
+      <td>
+        <button class="btn-outline btn-sm" data-ft='${JSON.stringify(t).replace(/'/g,"&#39;")}' onclick="editFishType(this)"><i class="fas fa-edit"></i></button>
+      </td>
+    </tr>`).join('')
 
   } catch(e) { toast('Error al cargar inventario: '+e.message, 'error') }
 }
@@ -850,6 +977,49 @@ async function doAddFish() {
       cost_price: document.getElementById('mfCost').value || null
     })
     closeModal(); toast('Pescado agregado!', 'success'); loadInventory()
+  } catch(e) { toast('Error: '+e.message, 'error') }
+}
+
+function showFishTypeModal(data) {
+  const isEdit = !!data
+  let html = `<h2>${isEdit ? 'Editar' : 'Nueva'} Especie</h2>`
+  html += '<label>Nombre común</label><input type="text" id="ftName" value="'+(isEdit?data.name:'')+'" required>'
+  html += '<label>Especie (nombre científico)</label><input type="text" id="ftSpecies" value="'+(isEdit?data.species:'')+'" required>'
+  html += '<label>Categoría</label><select id="ftCategory">'
+  ;['White','Blue','Shellfish','Crustacean','Other'].forEach(c => {
+    html += `<option value="${c}" ${isEdit && data.category===c?'selected':''}>${c}</option>`
+  })
+  html += '</select>'
+  html += '<label>Descripción</label><textarea id="ftDesc" rows="2">'+(isEdit?data.description||'':'')+'</textarea>'
+  html += '<div class="btn-row">'
+  html += '<button class="btn-outline" onclick="closeModal()">Cancelar</button>'
+  html += `<button class="btn-primary" onclick="doSaveFishType('${isEdit?data.id:''}')">${isEdit?'Guardar':'Crear'}</button>`
+  html += '</div>'
+  showModal(html)
+}
+
+function editFishType(btn) {
+  const data = JSON.parse(btn.dataset.ft)
+  showFishTypeModal(data)
+}
+
+async function doSaveFishType(id) {
+  const name = document.getElementById('ftName').value.trim()
+  const species = document.getElementById('ftSpecies').value.trim()
+  const category = document.getElementById('ftCategory').value
+  const description = document.getElementById('ftDesc').value.trim()
+  if (!name) return toast('El nombre es obligatorio', 'error')
+  if (!species) return toast('La especie es obligatoria', 'error')
+  try {
+    if (id) {
+      await api('PUT', `/api/fish-types/${id}`, { name, species, category, description })
+      toast('Especie actualizada!', 'success')
+    } else {
+      await api('POST', '/api/fish-types', { name, species, category, description })
+      toast('Especie creada!', 'success')
+    }
+    closeModal()
+    loadInventory()
   } catch(e) { toast('Error: '+e.message, 'error') }
 }
 
@@ -954,6 +1124,44 @@ document.querySelectorAll('#supTabs .tab').forEach(t => t.addEventListener('clic
   document.querySelectorAll('.supTab').forEach(x => x.style.display = 'none')
   document.getElementById('supTab' + this.dataset.suptab.charAt(0).toUpperCase() + this.dataset.suptab.slice(1)).style.display = 'block'
 }))
+
+// ===== PLANNER (Genetic Algorithm) =====
+async function runPlanner() {
+  const status = document.getElementById('plannerStatus')
+  const tbody = document.querySelector('#plannerTable tbody')
+  status.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Generando plan óptimo... (puede tomar unos segundos)'
+  tbody.innerHTML = '<tr><td colspan="6" class="text-center"><i class="fas fa-spinner fa-pulse"></i> Calculando...</td></tr>'
+  document.getElementById('plannerSummary').style.display = 'none'
+
+  try {
+    const res = await api('GET', '/api/planner/suggestions')
+    const r = res.result
+    tbody.innerHTML = r.suggestions.map(s => {
+      const marginPct = s.expected_margin > 0 && s.expected_revenue > 0
+        ? ((s.expected_margin / s.expected_revenue) * 100).toFixed(1)
+        : '0.0'
+      const confPct = (s.confidence * 100).toFixed(0)
+      const confClass = confPct > 70 ? 'badge-green' : confPct > 40 ? 'badge-yellow' : 'badge-red'
+      return `<tr>
+        <td>${s.fish_type_name}</td>
+        <td>—</td>
+        <td>—</td>
+        <td><strong>${s.suggested_qty.toFixed(1)} kg</strong></td>
+        <td><span class="badge badge-green">${marginPct}%</span></td>
+        <td><span class="badge ${confClass}">${confPct}%</span></td>
+      </tr>`
+    }).join('')
+    status.innerHTML = `<span style="color:var(--success)"><i class="fas fa-check-circle"></i> ${res.note}</span>`
+
+    document.getElementById('plannerRevenue').textContent = 'Bs. ' + r.total_revenue.toFixed(2)
+    document.getElementById('plannerCost').textContent = 'Bs. ' + r.total_cost.toFixed(2)
+    document.getElementById('plannerMargin').textContent = 'Bs. ' + r.total_margin.toFixed(2)
+    document.getElementById('plannerSummary').style.display = 'block'
+  } catch(e) {
+    status.innerHTML = `<span style="color:var(--danger)"><i class="fas fa-exclamation-circle"></i> Error: ${e.message}</span>`
+    tbody.innerHTML = ''
+  }
+}
 
 function showSupplierModal(sup) {
   let html = `<h2>${sup?'Editar':'Nuevo'} Proveedor</h2>`

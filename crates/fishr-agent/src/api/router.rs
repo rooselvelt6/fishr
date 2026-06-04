@@ -10,6 +10,7 @@ use crate::state::AppState;
 use crate::api::analytics;
 use crate::api::auth;
 use crate::api::inventory;
+use crate::api::planner;
 use crate::api::pos;
 use crate::api::customers;
 use crate::api::rate_limit;
@@ -56,6 +57,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/auth/me", get(auth::me))
         .route("/api/setup", post(setup::setup_branch))
         .route("/api/fish-types", get(inventory::list_fish_types))
+        .route("/api/fish-types", post(inventory::create_fish_type))
+        .route("/api/fish-types/{id}", put(inventory::update_fish_type))
         .route("/api/containers", get(inventory::list_containers))
         .route("/api/containers", post(inventory::create_container))
         .route("/api/containers/{id}", put(inventory::update_container))
@@ -65,7 +68,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/fish/{id}", delete(inventory::remove_fish))
         .route("/api/market-prices", get(inventory::list_market_prices))
         .route("/api/market-prices", post(inventory::set_market_price))
+        .route("/api/pricing/suggested", get(inventory::suggested_prices))
         .route("/api/pos/calculate", post(pos::calculate_sale))
+        .route("/api/pos/suggestions", post(pos::sale_suggestions))
         .route("/api/pos/confirm", post(pos::confirm_sale))
         .route("/api/pos/payment-methods", get(pos::list_payment_methods))
         .route("/api/preparations", get(pos::list_preparations))
@@ -94,6 +99,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/analytics/dashboard", get(analytics::dashboard))
         .route("/api/analytics/sales-trend", get(analytics::sales_trend))
         .route("/api/analytics/top-products", get(analytics::top_products))
+        .route("/api/planner/suggestions", get(planner::plan_inventory))
         .layer(middleware::from_fn(rate_limit::auth_required))
         .with_state(state.clone());
 

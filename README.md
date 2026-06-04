@@ -47,6 +47,10 @@ Seleccionar pescado → Báscula lee peso → Preparación opcional → Calcular
 | Reportes | Ventas diarias, desglose por hora, productos top, valorización de inventario |
 | Sincronización | Cola de pendientes, push periódico, estado del sync |
 | Autenticación | Sesiones con Argon2id + SHA-256, roles admin/cajero |
+| Asistente POS (difuso) | Motor de reglas difusas que sugiere descuentos, promociones y preparaciones en tiempo real |
+| Precios dinámicos (difuso) | Ajuste automático de precios según inventario, hora, demanda y estacionalidad |
+| Planificador (genético) | Algoritmo genético que optimiza cantidades de compra por especie para maximizar margen |
+| Ruteo (hormigas) | Optimización ACO de la secuencia de preparaciones en cocina |
 
 ## Tecnología
 
@@ -67,6 +71,7 @@ Seleccionar pescado → Báscula lee peso → Preparación opcional → Calcular
 | Procesamiento paralelo | **Rayon** 1.10 |
 | Tareas programadas | **tokio-cron-scheduler** |
 | Puerto serial | **serialport** 4.3 (báscula) |
+| RNG | **rand** 0.8 (GA, ACO) |
 | Limpieza memoria | **zeroize** |
 | Logging | **tracing** + **tracing-subscriber** |
 
@@ -76,7 +81,10 @@ Seleccionar pescado → Báscula lee peso → Preparación opcional → Calcular
 Cargo.toml                        # Workspace raíz (3 crates)
 ├── crates/fishr-core/            # Biblioteca compartida
 │   ├── src/models/               #   14 modelos de dominio
-│   └── src/sync/                 #   Protocolo de sincronización
+│   ├── src/sync/                 #   Protocolo de sincronización
+│   ├── src/fuzzy/                #   Motor de lógica difusa (Mamdani)
+│   ├── src/genetic/              #   Algoritmo genético (planificador)
+│   └── src/aco/                  #   Colonia de hormigas (ruteo)
 ├── crates/fishr-agent/           # Agente de sucursal
 │   ├── src/api/                  #   Handlers Axum (11 módulos)
 │   ├── src/db/migrations/        #   4 migraciones SQL
@@ -93,6 +101,42 @@ Cargo.toml                        # Workspace raíz (3 crates)
 ├── .github/workflows/ci.yml      #   CI pipeline
 └── docker-compose.yml            #   Central + PostgreSQL
 ```
+
+## Inteligencia Artificial
+
+### Fase 1 — Asistente de Ventas (Lógica Difusa)
+
+Motor de reglas difusas tipo Mamdani que analiza el contexto de cada venta (stock, hora, popularidad, lealtad del cliente) y devuelve sugerencias al cajero con nivel de confianza. Endpoint `POST /api/pos/suggestions`.
+
+Reglas de ejemplo:
+```
+SI stock = ALTO  Y  hora = CIERRE       → descuento hasta 15%
+SI stock = MUY_ALTO  Y  popularidad = BAJA → promoción por volumen
+SI cliente = VIP  Y  hora = MAÑANA       → preparación premium
+```
+
+### Fase 2 — Precios Dinámicos (Lógica Difusa)
+
+Extiende el motor difuso para modular precios en tiempo real. Considera inventario, hora del día, días desde último cambio, demanda estacional y horaria. Endpoint `GET /api/pricing/suggested`. Los factores se inyectan automáticamente en `POST /api/pos/calculate` y `POST /api/pos/confirm`.
+
+Reglas de ejemplo:
+```
+SI stock = ALTO  Y  hora_semana = VIERNES_TARDE → factor 0.85
+SI stock = BAJO  Y  temporada = ALTA            → factor 1.10
+SI popularidad = ALTA  Y  stock = BAJO          → factor 1.20
+```
+
+### Fase 3 — Planificador de Inventario (Algoritmo Genético)
+
+Algoritmo genético con selección por torneo, cruce uniforme y mutación gaussiana. Optimiza cantidades de compra por especie para maximizar margen bruto y minimizar desperdicio. La función de fitness penaliza excedentes, faltantes y costo de almacenaje. Endpoint `GET /api/planner/suggestions`. Tarea agendada diaria a las 6 AM via `tokio-cron-scheduler`.
+
+Parámetros del GA: población 50, generaciones 100, cruce 80%, mutación 15%, élite 2.
+
+### Fase 4 — Ruteo de Preparaciones (Colonia de Hormigas)
+
+ACO (Ant Colony Optimization) que optimiza la secuencia de preparaciones en cocina cuando hay múltiples items con preparación en una venta. Construye un grafo de transiciones con costos basados en tipo de preparación y categoría de pescado, y encuentra la ruta de menor costo total. Integrado en `POST /api/pos/calculate`.
+
+Parámetros ACO: 10 hormigas, 30 iteraciones, α=1, β=2, evaporación 30%.
 
 ## Pruebas
 

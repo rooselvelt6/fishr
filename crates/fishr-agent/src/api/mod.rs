@@ -3,6 +3,7 @@ pub mod auth;
 pub mod customers;
 pub mod error;
 pub mod inventory;
+pub mod planner;
 pub mod pos;
 pub mod rate_limit;
 pub mod reports;
