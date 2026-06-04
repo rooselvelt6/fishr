@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -6,23 +6,43 @@ use fishr_core::models::*;
 use crate::api::error::{ApiResult, ApiError, validate_not_empty, validate_positive_i32, validate_weight, validate_non_negative_f64};
 use crate::state::AppState;
 
-pub async fn list_fish_types(State(state): State<Arc<AppState>>) -> ApiResult<Vec<FishType>> {
+#[derive(Deserialize)]
+pub struct Pagination {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+pub async fn list_fish_types(
+    State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
+) -> ApiResult<Vec<FishType>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, FishTypeRow>(
         "SELECT id, name, species, category, description, op_counter, updated_at, synced_at, deleted_at
-         FROM fish_type WHERE deleted_at IS NULL ORDER BY name"
+         FROM fish_type WHERE deleted_at IS NULL ORDER BY name LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 
     Ok(Json(rows.into_iter().map(|r| r.into_model()).collect()))
 }
 
-pub async fn list_containers(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Container>> {
+pub async fn list_containers(
+    State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
+) -> ApiResult<Vec<Container>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, ContainerRow>(
         "SELECT id, branch_id, fish_type_id, fish_type_name, label, capacity, current_count,
                 location, is_active, op_counter, updated_at, synced_at, deleted_at
-         FROM container WHERE deleted_at IS NULL ORDER BY label"
+         FROM container WHERE deleted_at IS NULL ORDER BY label LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 
@@ -208,9 +228,10 @@ pub async fn add_fish(
         .execute(&state.db.pool)
         .await?;
 
-        crate::sync::push_sync(&state, "FishItem", &fish).await;
         items.push(fish);
     }
+
+    crate::sync::push_sync_batch(&state, "FishItem", &items).await;
 
     let new_count = container.current_count + req.count;
     sqlx::query("UPDATE container SET current_count=?1 WHERE id=?2")
@@ -224,15 +245,20 @@ pub async fn add_fish(
 
 pub async fn list_available_fish(
     State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
 ) -> ApiResult<Vec<FishItem>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, FishItemRow>(
         "SELECT id, branch_id, container_id, container_label, fish_type_id, fish_type_name,
                 weight_grams, added_at, sold_at, sold_in_sale_id,
                 supplier_delivery_item_id, cost_price,
                 op_counter, updated_at, synced_at, deleted_at
          FROM fish_item WHERE sold_at IS NULL AND deleted_at IS NULL
-         ORDER BY fish_type_name, added_at"
+         ORDER BY fish_type_name, added_at LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 
@@ -344,13 +370,18 @@ fn category_to_string(cat: &FishCategory) -> String {
 
 pub async fn list_market_prices(
     State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
 ) -> ApiResult<Vec<MarketPrice>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, MarketPriceRow>(
         "SELECT id, branch_id, fish_type_id, fish_type_name, price_per_kg, cost_price,
                 effective_from, effective_to, op_counter, updated_at, synced_at, deleted_at
          FROM market_price WHERE effective_to IS NULL AND deleted_at IS NULL
-         ORDER BY fish_type_name"
+         ORDER BY fish_type_name LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 

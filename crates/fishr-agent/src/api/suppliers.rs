@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -17,14 +17,25 @@ pub struct CreateSupplierRequest {
     pub is_self: Option<bool>,
 }
 
+#[derive(Deserialize)]
+pub struct Pagination {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 pub async fn list_suppliers(
     State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
 ) -> ApiResult<Vec<Supplier>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, SupplierRow>(
         "SELECT id, branch_id, name, rif, phone, email, address, contact_person,
                 is_self, is_active, op_counter, updated_at, synced_at, deleted_at
-         FROM supplier WHERE deleted_at IS NULL ORDER BY name"
+         FROM supplier WHERE deleted_at IS NULL ORDER BY name LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 
@@ -252,6 +263,7 @@ pub async fn create_delivery(
         .await?;
 
         let weight_per_fish = item_req.weight_grams / item_req.quantity;
+        let mut created_fish: Vec<FishItem> = Vec::with_capacity(item_req.quantity as usize);
         for _ in 0..item_req.quantity {
             let fish = FishItem::new(
                 state.config.branch_id.clone(),
@@ -286,9 +298,10 @@ pub async fn create_delivery(
             .execute(&state.db.pool)
             .await?;
 
-            crate::sync::push_sync(&state, "FishItem", &fish).await;
-            fish_created += 1;
+            created_fish.push(fish);
         }
+        crate::sync::push_sync_batch(&state, "FishItem", &created_fish).await;
+        fish_created += created_fish.len() as i32;
 
         sqlx::query("UPDATE container SET current_count = current_count + ?1 WHERE id = ?2")
             .bind(item_req.quantity)
@@ -336,14 +349,19 @@ pub async fn create_delivery(
 
 pub async fn list_deliveries(
     State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
 ) -> ApiResult<Vec<SupplierDelivery>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, SupplierDeliveryRow>(
         "SELECT id, branch_id, supplier_id, supplier_name, delivery_date, notes,
                 transport_plate, transport_driver, total_cost,
                 op_counter, updated_at, synced_at, deleted_at
          FROM supplier_delivery WHERE deleted_at IS NULL
-         ORDER BY delivery_date DESC"
+         ORDER BY delivery_date DESC LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 

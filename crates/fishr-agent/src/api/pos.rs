@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::Json;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -95,13 +95,25 @@ pub struct ConfirmSaleItem {
     pub preparation_fee: f64,
 }
 
+#[derive(Deserialize)]
+pub struct Pagination {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 pub async fn list_payment_methods(
     State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
 ) -> ApiResult<Vec<PaymentMethod>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, PaymentMethodRow>(
         "SELECT id, branch_id, name, description, is_active, op_counter, updated_at, synced_at, deleted_at
-         FROM payment_method WHERE is_active = 1 AND deleted_at IS NULL"
+         FROM payment_method WHERE is_active = 1 AND deleted_at IS NULL
+         LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 
@@ -110,12 +122,18 @@ pub async fn list_payment_methods(
 
 pub async fn list_preparations(
     State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
 ) -> ApiResult<Vec<Preparation>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, PreparationRow>(
         "SELECT id, branch_id, name, description, additional_cost, cost_type, is_active,
                 op_counter, updated_at, synced_at, deleted_at
-         FROM preparation WHERE is_active = 1 AND deleted_at IS NULL"
+         FROM preparation WHERE is_active = 1 AND deleted_at IS NULL
+         LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 
@@ -159,6 +177,16 @@ async fn precompute_price_factors(state: &AppState) -> anyhow::Result<std::colle
     .await
     .unwrap_or(1).max(1);
 
+    let sales_by_type: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
+        "SELECT fish_type_id, COUNT(*) as cnt FROM sale_item WHERE updated_at >= ?1 GROUP BY fish_type_id"
+    )
+    .bind(&week_ago)
+    .fetch_all(&state.db.pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
+
     let engine = build_pricing_engine();
     let month = now.month();
     let mut factors = std::collections::HashMap::new();
@@ -180,14 +208,7 @@ async fn precompute_price_factors(state: &AppState) -> anyhow::Result<std::colle
             (now - dt_utc).num_days() as f64
         } else { 0.0 };
 
-        let fish_sales: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sale_item WHERE fish_type_id = ?1 AND updated_at >= ?2"
-        )
-        .bind(&price.fish_type_id)
-        .bind(&week_ago)
-        .fetch_one(&state.db.pool)
-        .await
-        .unwrap_or(0);
+        let fish_sales = sales_by_type.get(&price.fish_type_id).copied().unwrap_or(0);
         let popularity_pct = (fish_sales as f64 / total_items_sold as f64) * 100.0;
 
         let seasonal_demand_pct = match month {

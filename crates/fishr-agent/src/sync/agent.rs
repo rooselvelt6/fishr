@@ -14,7 +14,7 @@ impl SyncAgent {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .unwrap();
+            .expect("Failed to build reqwest Client — TLS initialization failed");
 
         Self { state, config, client }
     }
@@ -118,21 +118,24 @@ impl SyncAgent {
         let mut interval = tokio::time::interval(
             std::time::Duration::from_secs(self.config.sync_interval_secs)
         );
+        let mut backoff = self.config.retry_delay_secs;
+        let max_backoff = 3600;
 
         loop {
             interval.tick().await;
             tracing::debug!("Running sync...");
 
             match self.sync_once().await {
-                Ok(()) => {}
+                Ok(()) => {
+                    backoff = self.config.retry_delay_secs;
+                }
                 Err(e) => {
                     if e.is_connection() {
                         tracing::debug!("Offline, will retry later");
                     } else {
                         tracing::error!("Sync error: {}", e);
-                        tokio::time::sleep(std::time::Duration::from_secs(
-                            self.config.retry_delay_secs
-                        )).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
+                        backoff = (backoff * 2).min(max_backoff);
                     }
                 }
             }

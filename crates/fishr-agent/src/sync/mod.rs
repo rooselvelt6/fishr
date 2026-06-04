@@ -54,3 +54,40 @@ pub async fn push_sync<T: serde::Serialize>(state: &crate::state::AppState, enti
     .await
     .ok();
 }
+
+pub async fn push_sync_batch<T: serde::Serialize>(state: &crate::state::AppState, entity_type: &str, items: &[T]) {
+    if items.is_empty() {
+        return;
+    }
+    let now = chrono::Utc::now();
+    let branch_id = &state.config.branch_id;
+    let ts = now.timestamp_millis();
+
+    if let Ok(mut tx) = state.db.pool.begin().await {
+        for item in items {
+            let payload = match serde_json::to_value(item) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+            if sqlx::query(
+                "INSERT INTO pending_sync (id, entity_type, entity_id, branch_id, op_counter, payload, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+            )
+            .bind(ulid::Ulid::new().to_string())
+            .bind(entity_type)
+            .bind(&id)
+            .bind(branch_id)
+            .bind(ts)
+            .bind(payload.to_string())
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .is_err() {
+                return;
+            }
+        }
+        tx.commit().await.ok();
+    }
+}

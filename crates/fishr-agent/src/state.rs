@@ -36,11 +36,12 @@ impl AgentConfig {
 
 impl AppState {
     pub async fn new() -> anyhow::Result<Self> {
-        dotenvy::dotenv().ok();
         let config = AgentConfig::from_env();
         let sync_config = SyncConfig::from_env();
 
-        let db = Arc::new(Database::new("sqlite://fishr.db?mode=rwc").await?);
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "sqlite://fishr.db?mode=rwc".to_string());
+        let db = Arc::new(Database::new(&database_url).await?);
         db.run_migrations().await?;
 
         Ok(Self {

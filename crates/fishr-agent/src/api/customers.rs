@@ -11,14 +11,25 @@ pub struct SearchQuery {
     pub q: String,
 }
 
+#[derive(Deserialize)]
+pub struct Pagination {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 pub async fn list_customers(
     State(state): State<Arc<AppState>>,
+    Query(pagination): Query<Pagination>,
 ) -> ApiResult<Vec<Customer>> {
+    let limit = pagination.limit.unwrap_or(50);
+    let offset = pagination.offset.unwrap_or(0);
     let rows = sqlx::query_as::<_, CustomerRow>(
         "SELECT id, branch_id, name, phone, email, rif, address, points,
                 op_counter, updated_at, synced_at, deleted_at
-         FROM customer WHERE deleted_at IS NULL ORDER BY name"
+         FROM customer WHERE deleted_at IS NULL ORDER BY name LIMIT ?1 OFFSET ?2"
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db.pool)
     .await?;
 
