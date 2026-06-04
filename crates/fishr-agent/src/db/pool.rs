@@ -148,7 +148,7 @@ impl Database {
         .await?;
 
         // Seed default admin user
-        let admin_hash = hash_password("admin123");
+        let admin_hash = hash_password("admin123")?;
         let admin_id = ulid::Ulid::new().to_string();
         sqlx::query(
             "INSERT OR IGNORE INTO user_account (id, branch_id, username, password_hash, display_name, role, is_active, created_at, updated_at)
@@ -193,12 +193,12 @@ impl Database {
     }
 }
 
-fn hash_password(password: &str) -> String {
+fn hash_password(password: &str) -> anyhow::Result<String> {
     use argon2::password_hash::{PasswordHasher, SaltString};
     use argon2::Argon2;
     let salt = SaltString::generate(&mut rand::rngs::OsRng);
-    Argon2::default()
+    let hash = Argon2::default()
         .hash_password(password.as_bytes(), &salt)
-        .map(|h| h.to_string())
-        .unwrap_or_else(|_| String::new())
+        .map_err(|e| anyhow::anyhow!("Error al hashear contraseña: {}", e))?;
+    Ok(hash.to_string())
 }

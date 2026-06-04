@@ -46,7 +46,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     let login = Router::new()
         .route("/api/auth/login", post(auth::login))
-        .layer(middleware::from_fn(rate_limit::login_rate_limit))
+        .layer(middleware::from_fn_with_state(state.clone(), rate_limit::login_rate_limit))
         .with_state(state.clone());
 
     let frontend = Router::new()
@@ -100,7 +100,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/analytics/sales-trend", get(analytics::sales_trend))
         .route("/api/analytics/top-products", get(analytics::top_products))
         .route("/api/planner/suggestions", get(planner::plan_inventory))
-        .layer(middleware::from_fn(rate_limit::auth_required))
+        .layer(middleware::from_fn_with_state(state.clone(), rate_limit::auth_required))
         .with_state(state.clone());
 
     let app = health.merge(login).merge(protected).merge(frontend);
