@@ -10,13 +10,13 @@ pub struct SyncAgent {
 }
 
 impl SyncAgent {
-    pub fn new(state: Arc<AppState>, config: SyncConfig) -> Self {
+    pub fn new(state: Arc<AppState>, config: SyncConfig) -> Result<Self, SyncError> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .expect("Failed to build reqwest Client — TLS initialization failed");
+            .map_err(|e| SyncError::Network(format!("Error al crear cliente HTTP: {}", e)))?;
 
-        Self { state, config, client }
+        Ok(Self { state, config, client })
     }
 
     pub async fn sync_once(&self) -> Result<(), SyncError> {
@@ -158,7 +158,13 @@ struct PendingRow {
 }
 
 pub async fn run_sync_loop(state: Arc<AppState>, config: SyncConfig) {
-    let agent = SyncAgent::new(state, config);
+    let agent = match SyncAgent::new(state, config) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!("Error al inicializar agente de sincronización: {}", e);
+            return;
+        }
+    };
     agent.run_loop().await;
 }
 
@@ -194,7 +200,10 @@ pub async fn api_trigger_sync(
     State(state): State<Arc<AppState>>,
 ) -> Json<serde_json::Value> {
     let config = state.sync_config.clone();
-    let agent = SyncAgent::new(state.clone(), config);
+    let agent = match SyncAgent::new(state.clone(), config) {
+        Ok(a) => a,
+        Err(e) => return Json(serde_json::json!({"error": format!("Error al inicializar: {}", e)})),
+    };
 
     match agent.sync_once().await {
         Ok(()) => Json(serde_json::json!({ "success": true })),

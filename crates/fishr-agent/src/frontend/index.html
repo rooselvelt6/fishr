@@ -314,6 +314,10 @@ tr:hover td{background:var(--surface2)}
               <span id="scaleDisplay" style="font-size:20px;font-weight:700;color:var(--success)">0 g</span>
             </div>
           </div>
+          <div class="search-bar" style="margin-bottom:8px">
+            <i class="fas fa-search" style="position:absolute;margin:10px 0 0 10px;color:var(--text2)"></i>
+            <input type="text" id="posSearch" placeholder="Buscar pescado..." oninput="filterPosFish()" style="padding-left:32px">
+          </div>
           <div class="pos-fish-grid" id="posFishGrid"></div>
           <div id="posSuggestions" style="margin-top:12px;display:none">
             <div class="flex-between mb-8">
@@ -670,6 +674,14 @@ async function loadPos() {
   } catch(e) { toast('Error al cargar POS: '+e.message, 'error') }
 }
 
+function filterPosFish() {
+  const q = document.getElementById('posSearch').value.toLowerCase()
+  document.querySelectorAll('#posFishGrid .pos-fish-item').forEach(el => {
+    const name = (el.querySelector('.name')?.textContent || '').toLowerCase()
+    el.style.display = name.includes(q) ? '' : 'none'
+  })
+}
+
 function addToCart(el) {
   const fish = JSON.parse(el.dataset.fish)
   // Show preparation selection
@@ -883,7 +895,7 @@ async function loadInventory() {
     const grid = document.getElementById('containerGrid')
     grid.innerHTML = contList.map(c => {
       const pct = c.capacity > 0 ? (c.current_count/c.capacity*100) : 0
-      const barClass = pct > 80 ? 'red' : pct > 50 ? 'yellow' : 'green'
+      const barClass = pct < 20 || pct > 80 ? 'red' : pct > 50 ? 'yellow' : 'green'
       return `<div class="inv-card">
         <h4>${c.label}</h4>
         <div class="inv-type">${c.fish_type_name} · ${c.location||'—'}</div>

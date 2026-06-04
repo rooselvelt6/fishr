@@ -1,6 +1,6 @@
 use axum::extract::{Query, State};
 use axum::Json;
-use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::prelude::{ToPrimitive, FromPrimitive};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use chrono::{Timelike, Datelike};
@@ -284,7 +284,7 @@ pub async fn calculate_sale(
                 Some(p) => {
                     let weight_kg = fish.weight_grams as f64 / 1000.0;
                     let base = weight_kg * price_per_kg;
-                    let cost_val = p.additional_cost.parse::<f64>().unwrap_or(0.0);
+                    let cost_val = p.additional_cost;
                     let fee = match p.cost_type.as_str() {
                         "Percentage" => base * cost_val / 100.0,
                         _ => cost_val,
@@ -850,10 +850,10 @@ impl PreparationRow {
             branch_id: self.branch_id,
             name: self.name,
             description: self.description,
-            additional_cost: self.additional_cost.parse().unwrap_or_else(|e| {
-                tracing::warn!("failed to parse additional_cost '{}': {}", self.additional_cost, e);
-                Default::default()
-            }),
+            additional_cost: {
+                let raw = rust_decimal::Decimal::from_f64(self.additional_cost).unwrap_or_default();
+                raw.round_dp(4)
+            },
             cost_type: if self.cost_type == "Percentage" { fishr_core::models::CostType::Percentage } else { fishr_core::models::CostType::Fixed },
             is_active: self.is_active,
             op_counter: self.op_counter,
@@ -873,7 +873,7 @@ struct PreparationRow {
     branch_id: String,
     name: String,
     description: String,
-    additional_cost: String,
+    additional_cost: f64,
     cost_type: String,
     is_active: bool,
     op_counter: i64,

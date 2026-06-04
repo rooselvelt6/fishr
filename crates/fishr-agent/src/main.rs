@@ -16,13 +16,19 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
-    let state = Arc::new(AppState::new().await?);
-    state.db.run_migrations().await?;
+    let mut state = AppState::new().await?;
+    state.db.setup_initial_data().await?;
 
     if state.config.branch_id.is_empty() {
-        tracing::warn!("BRANCH_ID not set, running first-time setup...");
-        state.db.setup_initial_data().await?;
+        if let Some(row) = sqlx::query_as::<_, (String,)>("SELECT id FROM branch LIMIT 1")
+            .fetch_optional(&state.db.pool)
+            .await?
+        {
+            state.config.branch_id = row.0;
+            tracing::info!("Branch ID cargado desde DB: {}", state.config.branch_id);
+        }
     }
+    let state = Arc::new(state);
 
     if let Some(port) = &state.config.scale_port {
         hardware::scale::init_scale(port, 9600);
